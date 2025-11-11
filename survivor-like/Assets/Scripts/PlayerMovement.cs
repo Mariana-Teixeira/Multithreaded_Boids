@@ -1,16 +1,26 @@
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 public class PlayerMovement : MonoBehaviour
 {
-    // Start is called once before the first execution of Update after the MonoBehaviour is created
-    void Start()
+    [Header("Movement")]
+    [SerializeField] private float _moveSpeed;
+    
+    private InputAction _moveAction;
+    private Rigidbody2D _rigidbody;
+    private Vector2 _moveDirection;
+
+    private void Awake()
     {
-        
+        _rigidbody = GetComponent<Rigidbody2D>();
+        _moveAction = InputSystem.actions.FindAction("Player/Move");
     }
 
-    // Update is called once per frame
-    void Update()
+    private void FixedUpdate()
     {
+        _moveDirection = _moveAction.ReadValue<Vector2>();
+        _rigidbody.linearVelocity = _moveDirection * _moveSpeed;
         
+        PlayerTargetService.UpdateTargetPosition(_rigidbody.position);
     }
 }
