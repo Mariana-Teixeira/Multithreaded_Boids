@@ -163,8 +163,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 5b1698669f3e21e4bbe4525c561c092e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::BoidSpawner
+  _boidConfig:
+    World: {fileID: 11400000, guid: 424280873cb17e24db8a2c7151fae009, type: 2}
+    Vision: {fileID: 11400000, guid: 15be3dc4a91195140a4187ebe804837e, type: 2}
+    Movement: {fileID: 11400000, guid: 535828ae9aabb6b41b48542541794708, type: 2}
+    Steering: {fileID: 11400000, guid: 59c3b9c914171c246a8368790125e7f7, type: 2}
   _boidPrefab: {fileID: 948602484209512612, guid: 287448af564faa34787d9fd47013348f, type: 3}
-  _cage: {fileID: 768696661}
+  _count: 250
 --- !u!1 &203844586
 GameObject:
   m_ObjectHideFlags: 0
@@ -292,51 +297,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 50, y: -30, z: 0}
---- !u!1 &768696658
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 768696660}
-  - component: {fileID: 768696661}
-  m_Layer: 0
-  m_Name: Cage
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &768696660
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 768696658}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -1.3322, y: 0.21117, z: 0.09743}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &768696661
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 768696658}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: f7cbed8545740db4eafc5e0c16ee8001, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Cage
-  _cageRadius: 20
 --- !u!1 &961739749
 GameObject:
   m_ObjectHideFlags: 0
@@ -468,7 +428,7 @@ Transform:
   m_GameObject: {fileID: 961739749}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 1, z: -10}
+  m_LocalPosition: {x: 0, y: 1, z: -50}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -481,4 +441,3 @@ SceneRoots:
   - {fileID: 961739753}
   - {fileID: 203844589}
   - {fileID: 80999629}
-  - {fileID: 768696660}
