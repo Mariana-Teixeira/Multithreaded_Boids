@@ -12,5 +12,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: f7cbed8545740db4eafc5e0c16ee8001, type: 3}
   m_Name: WorldConfig
   m_EditorClassIdentifier: Assembly-CSharp::WorldConfiguration
-  CageCenter: {x: 0, y: 0, z: 0}
-  CageRadius: 35
+  GridCenter: {x: 0, y: 0, z: 0}
+  GridRadius: 100
+  CellRadius: 20

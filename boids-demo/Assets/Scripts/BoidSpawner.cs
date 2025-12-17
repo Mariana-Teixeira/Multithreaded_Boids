@@ -1,4 +1,4 @@
-using SpatialPartition;
+using System;
 using UnityEngine;
 using Random = UnityEngine.Random;
 
@@ -9,29 +9,33 @@ public class BoidSpawner : MonoBehaviour
     [SerializeField] private int _count = 50;
     
     private Rigidbody[] _bodies;
-    private Octree _octree;
+    private SpatialGrid _spatialGrid;
 
     private void Awake()
     {
         _bodies = new Rigidbody[_count];
-        _octree = new Octree(_bodies, _boidConfig.Vision, _boidConfig.World);
+        _spatialGrid = new SpatialGrid(_boidConfig.World);
     }
 
     private void Start()
     {
         SpawnBoids();
-        _octree.Build();
+    }
+
+    private void Update()
+    {
+        _spatialGrid.Refresh(_bodies);
     }
 
     private void SpawnBoids()
     {
         for (int i = 0; i < _count; i++)
         {
-            var randomPosition = _boidConfig.World.CageCenter + Random.insideUnitSphere * Random.Range(0, _boidConfig.World.CageRadius);
+            var randomPosition = _boidConfig.World.GridCenter + Random.insideUnitSphere * Random.Range(0, _boidConfig.World.GridRadius);
             var randomRotation = Random.rotation;
             var boidGO = Instantiate(_boidPrefab, randomPosition, randomRotation);
             _bodies[i] = boidGO.GetComponent<Rigidbody>();
-            boidGO.GetComponent<Boid>().Initialize(_bodies, _bodies[i], _octree, _boidConfig);
+            boidGO.GetComponent<Boid>().Initialize(_spatialGrid, _bodies[i], _boidConfig);
         }
     }
 
@@ -39,6 +43,6 @@ public class BoidSpawner : MonoBehaviour
     {
         if (_boidConfig.World == null) return;
         Gizmos.color = Color.white;
-        Gizmos.DrawWireSphere(_boidConfig.World.CageCenter, _boidConfig.World.CageRadius);
+        Gizmos.DrawWireSphere(_boidConfig.World.GridCenter, _boidConfig.World.GridRadius);
     }
 }

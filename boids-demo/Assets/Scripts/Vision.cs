@@ -1,34 +1,23 @@
 using System.Collections.Generic;
-using SpatialPartition;
 using UnityEngine;
 
 public class Vision
 {
-    private readonly Octree _octree;
+    private readonly SpatialGrid _spatialGrid;
     private readonly VisionConfiguration _visionConfig;
     private readonly float _visionRadians;
     
-    public Vision(Octree octree, VisionConfiguration visionConfig)
+    public Vision(SpatialGrid spatialGrid, VisionConfiguration visionConfig)
     {
-        _octree = octree;
+        _spatialGrid = spatialGrid;
         _visionConfig = visionConfig;
         _visionRadians = Mathf.Cos(_visionConfig.VisionAngle * Mathf.Deg2Rad);
     }
     
     public List<Rigidbody> GetVisibleBodies(Vector3 currentPosition, Vector3 forwardVector)
     {
-        Vector3 minBounds = new Vector3(
-            currentPosition.x - _visionConfig.VisionRadius,
-            currentPosition.y - _visionConfig.VisionRadius,
-            currentPosition.z - _visionConfig.VisionRadius);
-        Vector3 maxBounds = new Vector3(
-            currentPosition.x + _visionConfig.VisionRadius,
-            currentPosition.y + _visionConfig.VisionRadius,
-            currentPosition.z + _visionConfig.VisionRadius);
-        
-        List<Rigidbody> queryBodies = new();
         List<Rigidbody> visibleBodies = new();
-        _octree.Query(queryBodies, minBounds, maxBounds);
+        List<Rigidbody> queryBodies = _spatialGrid.FindNearby(currentPosition);
         foreach (var body in queryBodies)
         {
             Vector3 vectorToBody = body.transform.position - currentPosition;

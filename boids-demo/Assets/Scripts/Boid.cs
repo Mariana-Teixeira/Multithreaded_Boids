@@ -1,4 +1,3 @@
-using SpatialPartition;
 using UnityEngine;
 
 [RequireComponent(typeof(Rigidbody))]
@@ -9,11 +8,11 @@ public class Boid : MonoBehaviour
     private Vision _vision;
     private bool _hasInitialized;
 
-    public void Initialize(Rigidbody[] allBodies, Rigidbody body, Octree octree, BoidConfiguration config)
+    public void Initialize(SpatialGrid spatialGrid, Rigidbody body, BoidConfiguration config)
     {
         _movement = new Movement(body, config.Movement);
         _steering = new Steering(config.Steering, config.World);
-        _vision = new Vision(octree, config.Vision);
+        _vision = new Vision(spatialGrid, config.Vision);
 
         OnInitialize();
     }

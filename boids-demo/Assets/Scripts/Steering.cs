@@ -28,8 +28,8 @@ public class Steering
     
     private Vector3 GetSpringVector(float velocity, Vector3 currentPosition) // F = -kx
     {
-        var springConstant = velocity / _worldConfig.CageRadius;
-        var bodyToCenter = _worldConfig.CageCenter - currentPosition;
+        var springConstant = velocity / _worldConfig.GridRadius;
+        var bodyToCenter = _worldConfig.GridCenter - currentPosition;
         var boidForce = bodyToCenter.normalized * (springConstant * bodyToCenter.magnitude);
         return boidForce * _steeringConfig.SpringForce;
     }

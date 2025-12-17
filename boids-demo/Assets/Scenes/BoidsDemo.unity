@@ -169,7 +169,7 @@ MonoBehaviour:
     Movement: {fileID: 11400000, guid: 535828ae9aabb6b41b48542541794708, type: 2}
     Steering: {fileID: 11400000, guid: 59c3b9c914171c246a8368790125e7f7, type: 2}
   _boidPrefab: {fileID: 948602484209512612, guid: 287448af564faa34787d9fd47013348f, type: 3}
-  _count: 250
+  _count: 500
 --- !u!1 &203844586
 GameObject:
   m_ObjectHideFlags: 0
