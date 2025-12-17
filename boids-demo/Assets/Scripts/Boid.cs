@@ -1,4 +1,4 @@
-using System;
+using SpatialPartition;
 using UnityEngine;
 
 [RequireComponent(typeof(Rigidbody))]
@@ -7,12 +7,13 @@ public class Boid : MonoBehaviour
     private Movement _movement;
     private Steering _steering;
     private Vision _vision;
+    private bool _hasInitialized;
 
-    public void Initialize(Rigidbody[] allBodies, Rigidbody body, BoidConfiguration config)
+    public void Initialize(Rigidbody[] allBodies, Rigidbody body, Octree octree, BoidConfiguration config)
     {
         _movement = new Movement(body, config.Movement);
         _steering = new Steering(config.Steering, config.World);
-        _vision = new Vision(allBodies, config.Vision);
+        _vision = new Vision(octree, config.Vision);
 
         OnInitialize();
     }
@@ -20,10 +21,13 @@ public class Boid : MonoBehaviour
     private void OnInitialize()
     {
         _movement.SetRandomVelocity(transform.forward);
+        _hasInitialized = true;
     }
 
     private void Update()
     {
+        if (!_hasInitialized) return;
+        
         var visibleBodies = _vision.GetVisibleBodies(transform.position, transform.forward);
         var currentVelocity = _movement.GetCurrentVelocity;
         _steering.UpdateSteering(transform.position, transform.forward, currentVelocity, visibleBodies);
@@ -31,6 +35,8 @@ public class Boid : MonoBehaviour
 
     private void FixedUpdate()
     {
+        if (!_hasInitialized) return;
+        
         _movement.Move(_steering.SteeringVector);
         _movement.Rotate();
     }

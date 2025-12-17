@@ -1,3 +1,4 @@
+using SpatialPartition;
 using UnityEngine;
 using Random = UnityEngine.Random;
 
@@ -7,22 +8,30 @@ public class BoidSpawner : MonoBehaviour
     [SerializeField] private GameObject _boidPrefab;
     [SerializeField] private int _count = 50;
     
-    private Rigidbody[] _boids;
+    private Rigidbody[] _bodies;
+    private Octree _octree;
 
     private void Awake()
     {
-        _boids = new Rigidbody[_count];
+        _bodies = new Rigidbody[_count];
+        _octree = new Octree(_bodies, _boidConfig.Vision, _boidConfig.World);
     }
 
     private void Start()
+    {
+        SpawnBoids();
+        _octree.Build();
+    }
+
+    private void SpawnBoids()
     {
         for (int i = 0; i < _count; i++)
         {
             var randomPosition = _boidConfig.World.CageCenter + Random.insideUnitSphere * Random.Range(0, _boidConfig.World.CageRadius);
             var randomRotation = Random.rotation;
             var boidGO = Instantiate(_boidPrefab, randomPosition, randomRotation);
-            _boids[i] = boidGO.GetComponent<Rigidbody>();
-            boidGO.GetComponent<Boid>().Initialize(_boids, _boids[i], _boidConfig);
+            _bodies[i] = boidGO.GetComponent<Rigidbody>();
+            boidGO.GetComponent<Boid>().Initialize(_bodies, _bodies[i], _octree, _boidConfig);
         }
     }
 
