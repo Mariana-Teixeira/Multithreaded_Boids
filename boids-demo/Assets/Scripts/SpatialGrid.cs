@@ -9,6 +9,8 @@ public class SpatialGrid
 
     private int _gridArea => _gridSize * _gridSize * _gridSize;
     private readonly List<Rigidbody>[] _buckets;
+    
+    private readonly List<Rigidbody> _nearbyBodies;
 
     public SpatialGrid(WorldConfiguration worldConfig)
     {
@@ -19,6 +21,8 @@ public class SpatialGrid
         _buckets = new List<Rigidbody>[_gridArea];
         for (int i = 0; i < _buckets.Length; i++)
             _buckets[i] = new List<Rigidbody>();
+
+        _nearbyBodies = new List<Rigidbody>();
     }
 
     private void AddBody(Rigidbody body)
@@ -57,7 +61,7 @@ public class SpatialGrid
 
     public List<Rigidbody> FindNearby(Vector3 position)
     {
-        List<Rigidbody> nearby = new List<Rigidbody>();
+        _nearbyBodies.Clear();
         Vector3Int gridPosition = GetGridPosition(position);
         for (int x = -1; x <= 1; x++)
         for (int y = -1; y <= 1; y++)
@@ -66,8 +70,8 @@ public class SpatialGrid
             Vector3Int nearbyGridPosition = gridPosition - new Vector3Int(x, y, z);
             bool valid = GetIndex(nearbyGridPosition, out int index);
             if (!valid) continue;
-            nearby.AddRange(_buckets[index]);
+            _nearbyBodies.AddRange(_buckets[index]);
         }
-        return nearby;
+        return _nearbyBodies;
     }
 }
