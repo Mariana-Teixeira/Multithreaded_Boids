@@ -12,7 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 06542a1cd262557479b215136fd72cf5, type: 3}
   m_Name: SteeringConfig
   m_EditorClassIdentifier: Assembly-CSharp::SteeringConfiguration
-  SpringWeight: 1
-  AlignmentWeight: 1
+  SpringWeight: 0.65
+  AlignmentWeight: 0.5
   SeparationWeight: 1
-  CohesionWeight: 1
+  CohesionWeight: 0.5

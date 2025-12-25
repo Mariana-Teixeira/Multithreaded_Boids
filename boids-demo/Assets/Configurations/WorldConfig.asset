@@ -13,5 +13,5 @@ MonoBehaviour:
   m_Name: WorldConfig
   m_EditorClassIdentifier: Assembly-CSharp::WorldConfiguration
   GridCenter: {x: 0, y: 0, z: 0}
-  GridRadius: 100
-  CellRadius: 20
+  GridRadius: 200
+  CellRadius: 40

@@ -12,5 +12,5 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 24d5e76d92444bc78814dabcee334c74, type: 3}
   m_Name: VisionConfig
   m_EditorClassIdentifier: Assembly-CSharp::VisionConfiguration
-  VisionRadius: 15
+  VisionRadius: 20
   VisionAngle: 60

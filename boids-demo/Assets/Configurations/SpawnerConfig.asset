@@ -13,4 +13,4 @@ MonoBehaviour:
   m_Name: SpawnerConfig
   m_EditorClassIdentifier: Assembly-CSharp::Boids.Configurations.SpawnerConfiguration
   Prefab: {fileID: 948602484209512612, guid: 287448af564faa34787d9fd47013348f, type: 3}
-  Count: 500
+  Count: 2000
