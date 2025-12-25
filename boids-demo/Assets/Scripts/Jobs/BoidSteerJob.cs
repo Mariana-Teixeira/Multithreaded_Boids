@@ -46,7 +46,7 @@ namespace Boids.Jobs
             for (int y = -1; y < 1; y++)
             for (int z = -1; z < 1; z++)
             {
-                int hash = Hash.GetHash(gridPosition);
+                int hash = Hash.GetHash(gridPosition + new int3(x, y, z));
             
                 // TODO: I haven't properly digested this code.
                 if (!SpatialMap.TryGetFirstValue(hash, out int nIndex, out NativeParallelMultiHashMapIterator<int> iterator)) return;
