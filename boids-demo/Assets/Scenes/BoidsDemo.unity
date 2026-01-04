@@ -394,7 +394,7 @@ GameObject:
   - component: {fileID: 1286936682}
   - component: {fileID: 1286936681}
   m_Layer: 0
-  m_Name: BoidManager
+  m_Name: DemoManager
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -412,11 +412,22 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 64d7d836c3924e3a8e50a5415daa8519, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Boids.Components.BoidManager
-  m_spawnerConfig: {fileID: 11400000, guid: 4c1481466d34814489719a6cce62cad8, type: 2}
-  m_worldConfig: {fileID: 11400000, guid: 424280873cb17e24db8a2c7151fae009, type: 2}
-  m_visionConfig: {fileID: 11400000, guid: 15be3dc4a91195140a4187ebe804837e, type: 2}
-  m_movementConfig: {fileID: 11400000, guid: 535828ae9aabb6b41b48542541794708, type: 2}
-  m_steeringConfig: {fileID: 11400000, guid: 59c3b9c914171c246a8368790125e7f7, type: 2}
+  m_settings:
+    GridCenter: {x: 0, y: 0, z: 0}
+    GridRadius: 200
+    CellRadius: 20
+    BoidPrefab: {fileID: 948602484209512612, guid: 287448af564faa34787d9fd47013348f, type: 3}
+    BoidCount: 2500
+    VisionAngle: 120
+    VisionRadius: 20
+    MinSpeed: 3
+    MaxSpeed: 8
+    RotationSpeed: 6
+    SpringWeight: 1
+    AlignmentWeight: 0.5
+    SeparationWeight: 1
+    CohesionWeight: 0.5
+    VisionThreshold: 0
 --- !u!4 &1286936682
 Transform:
   m_ObjectHideFlags: 0

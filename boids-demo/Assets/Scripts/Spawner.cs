@@ -1,14 +1,13 @@
-using Boids.Configurations;
 using UnityEngine;
 
 namespace Boids
 {
     public static class Spawner
     {
-        public static Transform Spawn(SpawnerConfiguration spawnerConfig, WorldConfiguration worldConfig)
+        public static Transform Spawn(Vector3 gridCenter, float gridRadius, GameObject prefab)
         {
-            var randomPosition = worldConfig.GridCenter + Random.insideUnitSphere * Random.Range(0, worldConfig.GridRadius);
-            var transform = Object.Instantiate(spawnerConfig.Prefab, randomPosition, Random.rotation).transform;
+            var randomPosition = gridCenter + Random.insideUnitSphere * Random.Range(0, gridRadius);
+            var transform = Object.Instantiate(prefab, randomPosition, Random.rotation).transform;
             return transform;
         }
     }

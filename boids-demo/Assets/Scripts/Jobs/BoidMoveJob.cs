@@ -14,29 +14,30 @@ namespace Boids.Jobs
         [ReadOnly] public float MaxSpeed;
         [ReadOnly] public float RotationSpeed;
 
-        [ReadOnly] public NativeArray<float3> SteeringForces;
-        
+        [ReadOnly] public NativeArray<float3> Steerings;
         public NativeArray<float3> Positions;
         public NativeArray<float3> Velocities;
         
         public void Execute(int index, TransformAccess transform)
         {
-            float3 currentVelocity = Velocities[index];
+            float3 velocity = Velocities[index];
+            float3 position = Positions[index];
             
-            currentVelocity += SteeringForces[index] * DeltaTime;
-            float distance = math.lengthsq(currentVelocity);
+            velocity += Steerings[index] * DeltaTime;
+            float distance = math.lengthsq(velocity);
             if (distance > MaxSpeed * MaxSpeed)
-                currentVelocity = math.normalize(currentVelocity) * MaxSpeed;
+                velocity = math.normalize(velocity) * MaxSpeed;
             else if (distance < MinSpeed * MinSpeed)
-                currentVelocity = math.normalize(currentVelocity) * MinSpeed;
+                velocity = math.normalize(velocity) * MinSpeed;
             
-            Positions[index] += currentVelocity * DeltaTime;
-            transform.position = Positions[index];
+            position += velocity * DeltaTime;
+            transform.position = position;
             
-            Quaternion targetRotation = Quaternion.LookRotation(currentVelocity);
+            Quaternion targetRotation = Quaternion.LookRotation(velocity);
             transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, DeltaTime * RotationSpeed);
-            
-            Velocities[index] = currentVelocity;
+
+            Velocities[index] = velocity;
+            Positions[index] = position;
         }
     }
 }
