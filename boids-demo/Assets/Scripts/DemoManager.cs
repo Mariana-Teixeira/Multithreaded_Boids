@@ -1,7 +1,4 @@
 using System;
-using System.Collections;
-using Unity.Collections;
-using Unity.Mathematics;
 using UnityEngine;
 using Random = UnityEngine.Random;
 
@@ -16,43 +13,44 @@ namespace Demo.Boids
 
     public class DemoManager : MonoBehaviour
     {
-        [SerializeField] private Transform m_target;
-        [SerializeField] private float m_targetRadius;
-        [SerializeField, Range(0, 1)] private float m_targetSpeed;
+        [SerializeField]
+        private Transform m_target;
+        [SerializeField, Range(0, 1)]
+        private float m_targetSpeed;
         private float m_targetAngle;
+        
+        [SerializeField]
+        private float m_visionRadius;
+        private float m_visionRadiusSquare;
         
         // m_count is located on the heap as a value type (4 bytes)
         // since m_count is located on the heap, it requires the CPU to fetch from the RAM
         // the CPU fetches a cache line from RAM, which makes flat data (such as arrays) better for performance
-        [SerializeField, ReadOnly] private int m_count;
+        [SerializeField]
+        private int m_count;
         
         // m_prefab is located on the heap as a reference type
         // since m_count is located on the heap, it requires the CPU to fetch from the RAM (cache miss)
         // furthermore, the RAM does not store a value that can be fetched, but a address of the actual data
-        [SerializeField] private GameObject m_prefab;
-    
-        // m_bodies is a standard reference type array that contains a pointer to data
-        private Rigidbody[] m_bodies;
+        [SerializeField]
+        private GameObject m_prefab;
 
-        [SerializeField] private float m_worldRadius;
-
-        [SerializeField] private float m_maxSpeed;
-    
-        // m_positions is a value type array that contains a pointer to data
-        // a native array allows programmers to do
-        // 1) safety multithreading (ensuring multiple threads don't write to the same index)
-        // 2) burst compilation
-        private NativeArray<float3> m_velocity;
-        private NativeArray<float3> m_positions;
-        private NativeArray<float3> m_steering;
+        [SerializeField]
+        private float m_worldRadius;
+        [SerializeField]
+        private float m_maxSpeed;
+        
+        private Transform[] m_transforms;
+        private Vector3[] m_velocity;
+        private Vector3[] m_steering;
     
         private void Awake()
         {
-            // allocator defines how long that memory is valid
-            m_bodies = new Rigidbody[m_count];
-            m_velocity = new NativeArray<float3>(m_count, Allocator.Persistent);
-            m_positions = new NativeArray<float3>(m_count, Allocator.Persistent);
-            m_steering = new NativeArray<float3>(m_count, Allocator.Persistent);
+            m_transforms = new Transform[m_count];
+            m_velocity = new Vector3[m_count];
+            m_steering = new Vector3[m_count];
+
+            m_visionRadiusSquare = m_visionRadius * m_visionRadius;
         }
     
         private void Start()
@@ -61,14 +59,24 @@ namespace Demo.Boids
             {
                 Vector3 randomPosition = Random.insideUnitSphere * Random.Range(0.0f, m_worldRadius);
                 GameObject boid = Instantiate(m_prefab, randomPosition, Random.rotation);
-                Rigidbody body = boid.GetComponent<Rigidbody>();
-                m_bodies[i] = body;
-                m_positions[i] = body.position;
-                m_velocity[i] = Random.Range(1.0f, m_maxSpeed);
+                m_transforms[i] = boid.transform;
+                m_velocity[i] = Random.insideUnitSphere * Random.Range(1.0f, m_maxSpeed);
             }
         }
 
         private void Update()
+        {
+            TargetUpdate();
+            BoidUpdate();
+            
+            #if UNITY_EDITOR
+            m_debugData.Position = m_transforms[m_debugData.BoidIndex].position;
+            m_debugData.Velocity = m_velocity[m_debugData.BoidIndex];
+            m_debugData.Steering = m_steering[m_debugData.BoidIndex];
+            #endif
+        }
+
+        private void TargetUpdate()
         {
             m_targetAngle += m_targetSpeed * Time.deltaTime;
             m_target.position = new Vector3(Mathf.Cos(m_targetAngle) * m_worldRadius,
@@ -76,39 +84,68 @@ namespace Demo.Boids
                                             0.0f);
         }
 
-        private void FixedUpdate()
+        private void BoidUpdate()
         {
             for (int i = 0; i < m_count; i++)
             {
-                Rigidbody body = m_bodies[i];
+                Vector3 cohesionVector = Vector3.zero;
+                short count = 1;
+                
+                for (int j = 0; j < m_count; j++)
+                {
+                    if (i == j) continue;
+                    if (Vector3.SqrMagnitude(m_transforms[i].position - m_transforms[j].position) > m_visionRadiusSquare) continue;
 
-                m_positions[i] = body.position;
-                m_velocity[i] = body.linearVelocity;
-                float3 targetPosition = m_target.position;
+                    cohesionVector += m_transforms[j].position - m_transforms[i].position;
+                    count++;
+                }
 
-                float3 desiredVector = targetPosition - m_positions[i];
-                float3 desiredVelocity = math.normalize(desiredVector) * m_maxSpeed;
-                m_steering[i] = desiredVelocity - m_velocity[i];
+                cohesionVector /= count;
 
-                body.AddForce(m_steering[i], ForceMode.Force);
+                m_steering[i] = cohesionVector - m_velocity[i];
+                
+                m_velocity[i] += m_steering[i] * Time.deltaTime;
+                m_transforms[i].position += m_velocity[i] * Time.deltaTime;
             }
         }
 
-        private void OnDestroy()
+        #region Development Methods
+        #if UNITY_EDITOR
+        [Serializable]
+        public struct DebugData
         {
-            m_velocity.Dispose();
-            m_positions.Dispose();
-            m_steering.Dispose();
+            public bool DrawGizmos;
+            public float PointRadius;
+            
+            public int BoidIndex;
+            public float TargetRadius;
+
+            [HideInInspector]
+            public Vector3 Position;
+            [HideInInspector]
+            public Vector3 Velocity;
+            [HideInInspector]
+            public Vector3 Steering;
         }
+
+        [SerializeField]
+        private DebugData m_debugData;
 
         private void OnDrawGizmos()
         {
-            Gizmos.color = Color.green;
+            if (!m_debugData.DrawGizmos) return;
+            
+            Gizmos.color = Color.black;
             Gizmos.DrawWireSphere(Vector3.zero, m_worldRadius);
-
-            Gizmos.color = Color.red;
-            Gizmos.DrawSphere(m_target.position, m_targetRadius * 0.2f);
-            Gizmos.DrawWireSphere(m_target.position, m_targetRadius);
+            Gizmos.DrawWireSphere(m_target.position, m_debugData.TargetRadius);
+            
+            Gizmos.color = Color.blue;
+            Gizmos.DrawWireSphere(m_debugData.Position, m_visionRadius);
+            Gizmos.DrawLine(m_debugData.Position, m_debugData.Position + m_debugData.Velocity);
+            Gizmos.DrawSphere(m_debugData.Position + m_debugData.Velocity, m_debugData.PointRadius);
+            Gizmos.DrawLine(m_debugData.Position, m_debugData.Position + m_debugData.Steering);
         }
+        #endif
+        #endregion
     }
 }
