@@ -18,7 +18,8 @@ namespace Demo.Boids
     {
         [SerializeField] private Transform m_target;
         [SerializeField] private float m_targetRadius;
-        private bool m_isNearTarget;
+        [SerializeField, Range(0, 1)] private float m_targetSpeed;
+        private float m_targetAngle;
         
         // m_count is located on the heap as a value type (4 bytes)
         // since m_count is located on the heap, it requires the CPU to fetch from the RAM
@@ -69,9 +70,10 @@ namespace Demo.Boids
 
         private void Update()
         {
-            if (!m_isNearTarget) return;
-            m_target.position = Random.insideUnitSphere * Random.Range(0.0f, m_worldRadius);
-            m_isNearTarget = false;
+            m_targetAngle += m_targetSpeed * Time.deltaTime;
+            m_target.position = new Vector3(Mathf.Cos(m_targetAngle) * m_worldRadius,
+                                            Mathf.Sin(m_targetAngle) * m_worldRadius,
+                                            0.0f);
         }
 
         private void FixedUpdate()
@@ -83,11 +85,6 @@ namespace Demo.Boids
                 m_positions[i] = body.position;
                 m_velocity[i] = body.linearVelocity;
                 float3 targetPosition = m_target.position;
-
-                if (math.lengthsq(m_positions[i] - targetPosition) < m_targetRadius * m_targetRadius)
-                {
-                    m_isNearTarget = true;
-                }
 
                 float3 desiredVector = targetPosition - m_positions[i];
                 float3 desiredVelocity = math.normalize(desiredVector) * m_maxSpeed;
