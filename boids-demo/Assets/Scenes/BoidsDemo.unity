@@ -163,21 +163,31 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 64d7d836c3924e3a8e50a5415daa8519, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::DemoManager
-  m_target: {fileID: 1666568809}
-  m_targetSpeed: 0.25
-  m_visionRadius: 10
-  m_count: 500
   m_prefab: {fileID: 948602484209512612, guid: 287448af564faa34787d9fd47013348f, type: 3}
+  m_count: 100
   m_worldRadius: 50
-  m_maxSpeed: 8
+  m_visionAngle: 160
+  m_maxSpeed: 6
+  m_seekingWeight: 3
+  m_separationRadius: 5
+  m_separationWeight: 12
+  m_cohesionRadius: 9
+  m_cohesionWeight: 8
+  m_alignmentRadius: 7.5
+  m_alignmentWeight: 8
   m_debugData:
     DrawGizmos: 1
     PointRadius: 0.2
-    BoidIndex: 0
     TargetRadius: 4
+    BoidIndex: 0
     Position: {x: 0, y: 0, z: 0}
     Velocity: {x: 0, y: 0, z: 0}
     Steering: {x: 0, y: 0, z: 0}
+    SeparationForce: {x: 0, y: 0, z: 0}
+    CohesionForce: {x: 0, y: 0, z: 0}
+    AlignmentForce: {x: 0, y: 0, z: 0}
+    m_cohesionList: 
+    m_alignmentList: 
 --- !u!1 &1666568808
 GameObject:
   m_ObjectHideFlags: 0

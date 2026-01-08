@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Serialization;
 using Random = UnityEngine.Random;
 
 namespace Demo.Boids
@@ -13,36 +15,50 @@ namespace Demo.Boids
 
     public class DemoManager : MonoBehaviour
     {
+        // m_prefab is located on the heap as a reference type
+        // since m_count is located on the heap, it requires the CPU to fetch from the RAM (cache miss)
+        // furthermore, the RAM does not store a value that can be fetched, but a address of the actual data
+        [Space]
         [SerializeField]
-        private Transform m_target;
-        [SerializeField, Range(0, 1)]
-        private float m_targetSpeed;
-        private float m_targetAngle;
-        
-        [SerializeField]
-        private float m_visionRadius;
-        private float m_visionRadiusSquare;
-        
+        private GameObject m_prefab;
         // m_count is located on the heap as a value type (4 bytes)
         // since m_count is located on the heap, it requires the CPU to fetch from the RAM
         // the CPU fetches a cache line from RAM, which makes flat data (such as arrays) better for performance
         [SerializeField]
         private int m_count;
-        
-        // m_prefab is located on the heap as a reference type
-        // since m_count is located on the heap, it requires the CPU to fetch from the RAM (cache miss)
-        // furthermore, the RAM does not store a value that can be fetched, but a address of the actual data
-        [SerializeField]
-        private GameObject m_prefab;
-
         [SerializeField]
         private float m_worldRadius;
+        [SerializeField]
+        private float m_visionAngle;
+        private float m_visionThreshold;
         [SerializeField]
         private float m_maxSpeed;
         
         private Transform[] m_transforms;
         private Vector3[] m_velocity;
         private Vector3[] m_steering;
+
+        [Space]
+        [SerializeField]
+        private float m_seekingWeight;
+        
+        [Space]
+        [SerializeField]
+        private float m_separationRadius;
+        [SerializeField]
+        private float m_separationWeight;
+        
+        [Space]
+        [SerializeField]
+        private float m_cohesionRadius;
+        [SerializeField]
+        private float m_cohesionWeight;
+        
+        [Space]
+        [SerializeField]
+        private float m_alignmentRadius;
+        [SerializeField]
+        private float m_alignmentWeight;
     
         private void Awake()
         {
@@ -50,7 +66,12 @@ namespace Demo.Boids
             m_velocity = new Vector3[m_count];
             m_steering = new Vector3[m_count];
 
-            m_visionRadiusSquare = m_visionRadius * m_visionRadius;
+            m_visionThreshold = Mathf.Cos(m_visionAngle * 0.5f * Mathf.Deg2Rad);
+            
+            #if UNITY_EDITOR
+            m_debugData.m_cohesionList = new List<int>();
+            m_debugData.m_alignmentList = new List<int>();
+            #endif
         }
     
         private void Start()
@@ -59,6 +80,8 @@ namespace Demo.Boids
             {
                 Vector3 randomPosition = Random.insideUnitSphere * Random.Range(0.0f, m_worldRadius);
                 GameObject boid = Instantiate(m_prefab, randomPosition, Random.rotation);
+                boid.name = $"Boids_{i}";
+                
                 m_transforms[i] = boid.transform;
                 m_velocity[i] = Random.insideUnitSphere * Random.Range(1.0f, m_maxSpeed);
             }
@@ -66,46 +89,90 @@ namespace Demo.Boids
 
         private void Update()
         {
-            TargetUpdate();
             BoidUpdate();
-            
-            #if UNITY_EDITOR
-            m_debugData.Position = m_transforms[m_debugData.BoidIndex].position;
-            m_debugData.Velocity = m_velocity[m_debugData.BoidIndex];
-            m_debugData.Steering = m_steering[m_debugData.BoidIndex];
-            #endif
         }
 
-        private void TargetUpdate()
-        {
-            m_targetAngle += m_targetSpeed * Time.deltaTime;
-            m_target.position = new Vector3(Mathf.Cos(m_targetAngle) * m_worldRadius,
-                                            Mathf.Sin(m_targetAngle) * m_worldRadius,
-                                            0.0f);
-        }
-
+        // Craig Reinolds' Steering Behaviors For Autonomous Characters
         private void BoidUpdate()
-        {
+        {            
             for (int i = 0; i < m_count; i++)
             {
-                Vector3 cohesionVector = Vector3.zero;
-                short count = 1;
+                Vector3 separationForce = Vector3.zero;
+                Vector3 cohesionForce = Vector3.zero;
+                Vector3 alignmentForce = Vector3.zero;
+                int cohesionCount = 0;
+                int alignmentCount = 0;
+
+                #if UNITY_EDITOR
+                m_debugData.m_alignmentList.Clear();
+                m_debugData.m_cohesionList.Clear();
+                #endif
                 
                 for (int j = 0; j < m_count; j++)
                 {
                     if (i == j) continue;
-                    if (Vector3.SqrMagnitude(m_transforms[i].position - m_transforms[j].position) > m_visionRadiusSquare) continue;
+                    
+                    Vector3 distanceVector = m_transforms[i].position - m_transforms[j].position;
+                    float distanceSquare = Vector3.SqrMagnitude(distanceVector);
 
-                    cohesionVector += m_transforms[j].position - m_transforms[i].position;
-                    count++;
+                    Vector3 reversedDistanceVector = m_transforms[j].position - m_transforms[i].position;
+                    float dot = Vector3.Dot(m_velocity[i].normalized, reversedDistanceVector.normalized);
+                    bool visible = dot > m_visionThreshold;
+                    
+                    if (visible && distanceSquare < m_separationRadius * m_separationRadius)
+                    {
+                        separationForce += distanceVector / distanceSquare;
+                        m_steering[i] += separationForce.normalized * m_separationWeight;
+                    }
+
+                    if (visible && distanceSquare < m_cohesionRadius * m_cohesionRadius)
+                    {
+                        cohesionForce += m_transforms[j].position;
+                        cohesionCount++;
+                        
+                        #if UNITY_EDITOR
+                        m_debugData.m_cohesionList.Add(j);
+                        #endif
+                    }
+
+                    if (visible && distanceSquare < m_alignmentRadius * m_alignmentRadius)
+                    {
+                        alignmentForce += m_velocity[j];
+                        alignmentCount++;
+                        
+                        #if UNITY_EDITOR
+                        m_debugData.m_alignmentList.Add(j);
+                        #endif
+                    }
                 }
 
-                cohesionVector /= count;
+                if (cohesionCount > 0)
+                {
+                    cohesionForce = cohesionForce/cohesionCount - m_transforms[i].position;
+                    m_steering[i] += cohesionForce.normalized * m_cohesionWeight;
+                }
 
-                m_steering[i] = cohesionVector - m_velocity[i];
+                if (alignmentCount > 0)
+                {
+                    alignmentForce /= alignmentCount;
+                    m_steering[i] += alignmentForce.normalized * m_alignmentWeight;
+                }
                 
                 m_velocity[i] += m_steering[i] * Time.deltaTime;
+                m_velocity[i] = Vector3.ClampMagnitude(m_velocity[i], m_maxSpeed);
                 m_transforms[i].position += m_velocity[i] * Time.deltaTime;
+                
+                #if UNITY_EDITOR
+                if (m_debugData.BoidIndex == i)
+                {
+                    m_debugData.Position = m_transforms[i].position;
+                    m_debugData.Velocity = m_velocity[i];
+                    m_debugData.Steering = m_steering[i];
+                    m_debugData.SeparationForce = separationForce;
+                    m_debugData.CohesionForce = cohesionForce;
+                    m_debugData.AlignmentForce = alignmentForce;
+                }
+                #endif
             }
         }
 
@@ -116,34 +183,73 @@ namespace Demo.Boids
         {
             public bool DrawGizmos;
             public float PointRadius;
-            
-            public int BoidIndex;
             public float TargetRadius;
-
+            
+            [Space]
+            public int BoidIndex;
+            
             [HideInInspector]
             public Vector3 Position;
             [HideInInspector]
             public Vector3 Velocity;
             [HideInInspector]
             public Vector3 Steering;
+            [HideInInspector]
+            public Vector3 SeparationForce;
+            [HideInInspector]
+            public Vector3 CohesionForce;
+            [HideInInspector]
+            public Vector3 AlignmentForce;
+
+            [Space]
+            public List<int> m_cohesionList;
+            [Space]
+            public List<int> m_alignmentList;
         }
 
+        [Space]
         [SerializeField]
         private DebugData m_debugData;
 
         private void OnDrawGizmos()
         {
             if (!m_debugData.DrawGizmos) return;
-            
+
             Gizmos.color = Color.black;
             Gizmos.DrawWireSphere(Vector3.zero, m_worldRadius);
-            Gizmos.DrawWireSphere(m_target.position, m_debugData.TargetRadius);
+            
+            Gizmos.color = Color.red;
+            Gizmos.DrawSphere(m_debugData.Position + m_debugData.Velocity + m_debugData.Steering, m_debugData.PointRadius);
+            Gizmos.DrawLine(m_debugData.Position + m_debugData.Velocity, m_debugData.Position + m_debugData.Velocity + m_debugData.Steering);
             
             Gizmos.color = Color.blue;
-            Gizmos.DrawWireSphere(m_debugData.Position, m_visionRadius);
-            Gizmos.DrawLine(m_debugData.Position, m_debugData.Position + m_debugData.Velocity);
             Gizmos.DrawSphere(m_debugData.Position + m_debugData.Velocity, m_debugData.PointRadius);
-            Gizmos.DrawLine(m_debugData.Position, m_debugData.Position + m_debugData.Steering);
+            Gizmos.DrawLine(m_debugData.Position, m_debugData.Position + m_debugData.Velocity);
+            
+            Gizmos.color = Color.cyan;
+            Gizmos.DrawWireSphere(m_debugData.Position, m_separationRadius);
+            Gizmos.DrawLine(m_debugData.Position, m_debugData.Position + m_debugData.SeparationForce);
+            Gizmos.DrawSphere(m_debugData.Position + m_debugData.SeparationForce, m_debugData.PointRadius);
+            
+            Gizmos.color = Color.magenta;
+            Gizmos.DrawWireSphere(m_debugData.Position, m_cohesionRadius);
+            Gizmos.DrawLine(m_debugData.Position, m_debugData.Position + m_debugData.CohesionForce);
+            Gizmos.DrawSphere(m_debugData.Position + m_debugData.CohesionForce, m_debugData.PointRadius);
+
+            foreach (int index in m_debugData.m_cohesionList)
+            {
+                Gizmos.DrawSphere(m_transforms[index].position, m_debugData.PointRadius);
+            }
+            
+            Gizmos.color = Color.yellow;
+            Gizmos.DrawWireSphere(m_debugData.Position, m_alignmentRadius);
+            Gizmos.DrawLine(m_debugData.Position, m_debugData.Position + m_debugData.AlignmentForce);
+            Gizmos.DrawSphere(m_debugData.Position + m_debugData.AlignmentForce, m_debugData.PointRadius);
+
+            foreach (int index in m_debugData.m_alignmentList)
+            {
+                Gizmos.DrawSphere(m_transforms[index].position, m_debugData.PointRadius);
+            }
         }
         #endif
         #endregion
