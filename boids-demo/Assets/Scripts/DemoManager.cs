@@ -37,10 +37,6 @@ namespace Demo.Boids
         private Transform[] m_transforms;
         private Vector3[] m_velocity;
         private Vector3[] m_steering;
-
-        [Space]
-        [SerializeField]
-        private float m_seekingWeight;
         
         [Space]
         [SerializeField]
@@ -59,6 +55,10 @@ namespace Demo.Boids
         private float m_alignmentRadius;
         [SerializeField]
         private float m_alignmentWeight;
+        
+        [Space]
+        [SerializeField]
+        private float m_timePrediction;
     
         private void Awake()
         {
@@ -102,6 +102,8 @@ namespace Demo.Boids
                 Vector3 alignmentForce = Vector3.zero;
                 int cohesionCount = 0;
                 int alignmentCount = 0;
+                
+                m_steering[i] = Vector3.zero;
 
                 #if UNITY_EDITOR
                 m_debugData.m_alignmentList.Clear();
@@ -158,6 +160,36 @@ namespace Demo.Boids
                     m_steering[i] += alignmentForce.normalized * m_alignmentWeight;
                 }
                 
+                Vector3 futurePosition = m_transforms[i].position + m_velocity[i] * m_timePrediction;
+                if (Vector3.SqrMagnitude(futurePosition) > m_worldRadius * m_worldRadius)
+                {
+                    // Variable names from Kyle Halladay's "Ray-Sphere Intersection with Simple Math".
+                    // World Center is at Vector3.Zero.
+
+                    Vector3 forwardVector = m_velocity[i].normalized;
+                    
+                    float tc = Vector3.Dot(futurePosition, forwardVector);
+                    float dSquare = futurePosition.sqrMagnitude - tc * tc;
+                    float t1c = Mathf.Sqrt(m_worldRadius * m_worldRadius - dSquare);
+                    
+                    float t1 = tc - t1c;
+                    Vector3 collisionPoint = futurePosition - forwardVector * t1;
+
+                    Vector3 collisionNormal = (-collisionPoint).normalized;
+                    Vector3 dotVector = forwardVector * Vector3.Dot(collisionNormal, forwardVector);
+                    Vector3 parallel = collisionNormal - dotVector;
+                    
+                    m_steering[i] = parallel.normalized * m_maxSpeed;
+                    
+                    #if UNITY_EDITOR
+                    if (m_debugData.BoidIndex == i)
+                    {
+                        m_debugData.Parallel = parallel;
+                        m_debugData.CollisionPoint = collisionPoint;
+                    }
+                    #endif
+                }
+                
                 m_velocity[i] += m_steering[i] * Time.deltaTime;
                 m_velocity[i] = Vector3.ClampMagnitude(m_velocity[i], m_maxSpeed);
                 m_transforms[i].position += m_velocity[i] * Time.deltaTime;
@@ -171,6 +203,7 @@ namespace Demo.Boids
                     m_debugData.SeparationForce = separationForce;
                     m_debugData.CohesionForce = cohesionForce;
                     m_debugData.AlignmentForce = alignmentForce;
+                    m_debugData.FuturePosition = futurePosition;
                 }
                 #endif
             }
@@ -183,7 +216,7 @@ namespace Demo.Boids
         {
             public bool DrawGizmos;
             public float PointRadius;
-            public float TargetRadius;
+            public float ColorTransparency;
             
             [Space]
             public int BoidIndex;
@@ -200,11 +233,19 @@ namespace Demo.Boids
             public Vector3 CohesionForce;
             [HideInInspector]
             public Vector3 AlignmentForce;
+            [HideInInspector]
+            public Vector3 FuturePosition;
+            [HideInInspector]
+            public Vector3 Parallel;
+            
+            [Space]
+            public Vector3 CollisionPoint;
 
             [Space]
             public List<int> m_cohesionList;
             [Space]
             public List<int> m_alignmentList;
+
         }
 
         [Space]
@@ -215,8 +256,8 @@ namespace Demo.Boids
         {
             if (!m_debugData.DrawGizmos) return;
 
-            Gizmos.color = Color.black;
-            Gizmos.DrawWireSphere(Vector3.zero, m_worldRadius);
+            Gizmos.color = new Color(1.0f, 1.0f, 1.0f, m_debugData.ColorTransparency);
+            Gizmos.DrawSphere(Vector3.zero, m_worldRadius);
             
             Gizmos.color = Color.red;
             Gizmos.DrawSphere(m_debugData.Position + m_debugData.Velocity + m_debugData.Steering, m_debugData.PointRadius);
@@ -250,6 +291,11 @@ namespace Demo.Boids
             {
                 Gizmos.DrawSphere(m_transforms[index].position, m_debugData.PointRadius);
             }
+            
+            Gizmos.color = Color.white;
+            Gizmos.DrawLine(m_debugData.Position, m_debugData.FuturePosition);
+            Gizmos.DrawRay(m_debugData.Position, m_debugData.Parallel);
+            Gizmos.DrawSphere(m_debugData.CollisionPoint, m_debugData.PointRadius);
         }
         #endif
         #endregion
