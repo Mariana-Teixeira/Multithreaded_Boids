@@ -7,12 +7,6 @@ namespace Demo.Boids
 {
     public class DemoManager : MonoBehaviour
     {
-        private enum GameState
-        {
-            Wander,
-            Flock
-        }
-        
         [Serializable]
         private struct WorldData
         {
@@ -72,7 +66,6 @@ namespace Demo.Boids
         private Vector3[] m_velocities;
         private Vector3[] m_steerings;
             
-        private Vector3[] m_wanderOffsets;
         private Vector3[] m_containmentProbes;
         private const int PROBE_OFFSET = 5;
     
@@ -82,7 +75,6 @@ namespace Demo.Boids
             m_velocities = new Vector3[m_worldData.Count];
             m_steerings = new Vector3[m_worldData.Count];
 
-            m_wanderOffsets = new Vector3[m_worldData.Count];
             m_containmentProbes = new Vector3[m_worldData.Count * 5];
         }
     
@@ -95,7 +87,6 @@ namespace Demo.Boids
                 boid.name = $"Boids_{i}";
                 
                 m_transforms[i] = boid.transform;
-                // m_velocities[i] = Random.insideUnitSphere * Random.Range(m_boidData.MinSpeed, m_boidData.MaxSpeed);
             }
         }
 
@@ -111,7 +102,6 @@ namespace Demo.Boids
             {
                 UpdateGrid(i, neighbours, out int count);
                 UpdateProbes(i);
-                UpdateState(i, count);
                 UpdateLogic(i, neighbours, count);
                 UpdateMovement(i);
                 UpdateRotation(i);
@@ -164,31 +154,11 @@ namespace Demo.Boids
             }
 #endif
         }
-        
-        private void UpdateState(int index, int neighbourCount)
-        {
-            if (neighbourCount > 0)
-            {
-                m_state = GameState.Flock;
-            }
-            else
-            {
-                m_state = GameState.Wander;
-            }
-        }
 
         private void UpdateLogic(int index, int[] neighbours, int neighbourCount)
         {    
-            if (m_state == GameState.Wander)
-            {
-                m_steerings[index] = GetWanderSteering(index, m_transforms[index].position, m_velocities[index], m_boidData.MaxSpeed, m_wanderOffsets);
-                m_steerings[index] += GetContainment();
-            }
-            else if (m_state == GameState.Flock)
-            {
-                m_steerings[index] = GetFlockSteering(index, m_transforms, m_velocities, neighbours, neighbourCount, m_boidData);
-                m_steerings[index] += GetContainment();
-            }
+            m_steerings[index] = GetFlockSteering(index, m_transforms, m_velocities, neighbours, neighbourCount, m_boidData);
+            m_steerings[index] += GetContainment();
             
             Vector3 GetContainment()
             {
@@ -204,7 +174,7 @@ namespace Demo.Boids
 
                 Vector3 activeProbe = myProbes.FirstOrDefault(x => x.sqrMagnitude > m_worldData.WorldRadius * m_worldData.WorldRadius);
                 if (activeProbe != default)
-                     return GetContainmentSteering(index, activeProbe, m_transforms[index].position, m_velocities[index], m_worldData, m_boidData);
+                     return GetContainmentSteering(index, m_transforms[index].position, m_velocities[index], activeProbe, m_worldData);
                 return Vector3.zero;
             }
         }
@@ -229,13 +199,6 @@ namespace Demo.Boids
         {
             Quaternion lookAt = Quaternion.LookRotation(m_velocities[index]);
             m_transforms[index].rotation = lookAt;
-            
-#if UNITY_EDITOR
-            if (m_debugData.BoidIndex == index)
-            {
-                m_debugData.LocalUp = m_transforms[index].up;
-            }
-#endif
         }
         
         private Vector3 GetFlockSteering(
@@ -248,7 +211,6 @@ namespace Demo.Boids
             Vector3 cohesionForce = new Vector3();
             Vector3 alignmentForce = new Vector3();
 
-            int separationCount = 0;
             int cohesionCount = 0;
             int alignmentCount = 0;
             
@@ -264,7 +226,6 @@ namespace Demo.Boids
                     dot > m_boidData.SeparationDot)
                 {
                     separationForce += vectorFromNeighbour / vectorFromNeighbour.magnitude;
-                    separationCount++;
                 }
 
                 if (vectorToNeighbour.sqrMagnitude < m_boidData.CohesionRadius * m_boidData.CohesionRadius &&
@@ -306,39 +267,12 @@ namespace Demo.Boids
 #endif
             return steering.normalized * m_boidData.MaxSpeed;
         }
-        
-        private Vector3 GetWanderSteering(
-            int index, Vector3 position, Vector3 velocity, float maxSpeed,
-            Vector3[] offsets)
-        {
-            Vector3 wanderOrigin = position + velocity.normalized * m_boidData.WanderLength;
-            Vector3 defaultPoint = wanderOrigin + Vector3.right * m_boidData.WanderRadius;
-            Vector3 displacementOrigin = defaultPoint + offsets[index];
-            Vector3 displacementPoint = displacementOrigin + Random.insideUnitSphere * m_boidData.WanderRate;
-
-            Vector3 wanderPoint = wanderOrigin + (displacementPoint - wanderOrigin).normalized * m_boidData.WanderRadius;
-            offsets[index] = wanderPoint - defaultPoint;
-            
-#if UNITY_EDITOR
-            if (m_debugData.BoidIndex == index)
-            {
-                m_debugData.WanderOrigin = wanderOrigin;
-                m_debugData.WanderDefaultPoint = defaultPoint;
-                m_debugData.WanderDisplacementOrigin = displacementOrigin;
-                m_debugData.WanderPoint = wanderPoint;
-                m_debugData.WanderOffset = offsets[index];
-            }
-#endif
-
-            Vector3 desiredVelocity = (wanderPoint - position).normalized * maxSpeed;
-            return desiredVelocity - velocity;
-        }
 
         private Vector3 GetContainmentSteering(
-            int index, Vector3 probe, Vector3 position, Vector3 velocity,
-            WorldData worldData, BoidData boidData)
+            int index, Vector3 position, Vector3 velocity,
+            Vector3 activeProbe, WorldData worldData)
         {
-            Vector3 collisionPoint = GetCollisionPoint(position, (probe - position).normalized, worldData.WorldRadius);
+            Vector3 collisionPoint = GetCollisionPoint(position, (activeProbe - position).normalized, worldData.WorldRadius);
             Vector3 perpendicular = GetPerpendicular(-collisionPoint.normalized, -velocity.normalized);
             
 #if UNITY_EDITOR
@@ -359,16 +293,13 @@ namespace Demo.Boids
                 return origin + rayDirection * t1;
             }
             
-            bool SolveQuadratic(float a, float b, float c, out float t0, out float t1)
+            void SolveQuadratic(float a, float b, float c, out float t0, out float t1)
             {
                 t0 = t1 = 0;
                 
                 float discriminant = b * b - 4 * a * c;
 
-                if (discriminant < 0) 
-                {
-                    return false;
-                }
+                if (discriminant < 0) return;
                 
                 if (discriminant == 0) 
                 {
@@ -384,8 +315,6 @@ namespace Demo.Boids
                 }
 
                 if (t0 > t1) (t0, t1) = (t1, t0);
-
-                return true;
             }
 
             Vector3 GetPerpendicular(Vector3 collisionNormal, Vector3 normalForward)
@@ -410,8 +339,6 @@ namespace Demo.Boids
             public int BoidIndex;
 
             [NonSerialized]
-            public Vector3 LocalUp;
-            [NonSerialized]
             public Vector3 Position;
             [NonSerialized]
             public Vector3 Velocity;
@@ -429,16 +356,6 @@ namespace Demo.Boids
             public Vector3 ContainPerpendicular;
             [NonSerialized]
             public Vector3 ContainCollisionPoint;
-            [NonSerialized]
-            public Vector3 WanderOrigin;
-            [NonSerialized]
-            public Vector3 WanderDefaultPoint;
-            [NonSerialized]
-            public Vector3 WanderDisplacementOrigin;
-            [NonSerialized]
-            public Vector3 WanderPoint;
-            [NonSerialized]
-            public Vector3 WanderOffset;
 
             public void CleanData()
             {
@@ -486,18 +403,16 @@ namespace Demo.Boids
                 }
             }
 
-            if (m_state == GameState.Flock)
-            {
-                DrawFlock();
-            }
-            else if (m_state == GameState.Wander)
-            {
-                DrawWander();
-            }
-            else
-            {
-                DrawContain();
-            }
+            DrawContain();
+            DrawFlock();
+        }
+        
+        private void DrawContain()
+        {
+            Gizmos.color = Color.white;
+            Gizmos.DrawRay(m_debugData.Position, m_debugData.ContainPerpendicular);
+            Gizmos.DrawLine(m_debugData.Position, m_debugData.ContainCollisionPoint);
+            Gizmos.DrawSphere(m_debugData.ContainCollisionPoint, m_debugData.PointRadius);
         }
 
         private void DrawFlock()
@@ -513,32 +428,6 @@ namespace Demo.Boids
             Gizmos.color = Color.yellow;
             Gizmos.DrawLine(m_debugData.Position, m_debugData.Position + m_debugData.AlignmentForce);
             Gizmos.DrawSphere(m_debugData.Position + m_debugData.AlignmentForce, m_debugData.PointRadius);
-        }
-
-        private void DrawWander()
-        {
-            Gizmos.color = Color.cyan;
-            Gizmos.DrawWireSphere(m_debugData.WanderOrigin, m_boidData.WanderRadius);
-            Gizmos.DrawSphere(m_debugData.WanderPoint, m_debugData.PointRadius);
-            
-            Gizmos.color = Color.magenta;
-            Gizmos.DrawWireSphere(m_debugData.WanderDisplacementOrigin, m_boidData.WanderRate);
-            Gizmos.DrawSphere(m_debugData.WanderDisplacementOrigin, m_debugData.PointRadius);
-            
-            Gizmos.color = Color.yellow;
-            Gizmos.DrawLine(m_debugData.WanderDisplacementOrigin, m_debugData.WanderPoint);
-            Gizmos.DrawSphere(m_debugData.WanderPoint, m_debugData.PointRadius);
-            
-            Gizmos.color = Color.white;
-            Gizmos.DrawLine(m_debugData.WanderDefaultPoint, m_debugData.WanderDefaultPoint + m_debugData.WanderOffset);
-        }
-
-        private void DrawContain()
-        {
-            Gizmos.color = Color.cyan;
-            Gizmos.DrawRay(m_debugData.Position, m_debugData.ContainPerpendicular);
-            Gizmos.DrawLine(m_debugData.Position, m_debugData.ContainCollisionPoint);
-            Gizmos.DrawSphere(m_debugData.ContainCollisionPoint, m_debugData.PointRadius);
         }
 #endif
 #endregion
