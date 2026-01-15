@@ -163,15 +163,17 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 64d7d836c3924e3a8e50a5415daa8519, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::DemoManager
+  m_prefab: {fileID: 948602484209512612, guid: 287448af564faa34787d9fd47013348f, type: 3}
   m_worldData:
     WorldRadius: 50
     SpawnRadius: 25
     Count: 500
   m_boidData:
-    Prefab: {fileID: 948602484209512612, guid: 287448af564faa34787d9fd47013348f, type: 3}
     MinSpeed: 4
     MaxSpeed: 8
-    VisionRadius: 12
+    CellSize: 0
+    ProbeLength: 3
+    ProbeAngle: 90
     SeparationRadius: 5
     SeparationDot: -0.707
     SeparationWeight: 12
@@ -181,15 +183,11 @@ MonoBehaviour:
     AlignmentRadius: 7.5
     AlignmentDot: 0.7
     AlignmentWeight: 8
-    WanderLength: 2
-    WanderRadius: 3
-    WanderRate: 0.5
-    ContainLength: 2
-    ContainAngle: 45
-  m_state: 0
   m_debugData:
     DrawGizmos: 1
-    DrawBoidGizmos: 1
+    GizmosType:
+      WorldGizmo: 1
+      BoidGizmo: 1
     PointRadius: 0.2
     BoidIndex: 0
 --- !u!1 &1666568808

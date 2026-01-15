@@ -1,6 +1,11 @@
 using System;
-using System.Linq;
+using System.Net;
+using Unity.Collections;
+using Unity.Jobs;
+using Unity.Mathematics;
 using UnityEngine;
+using UnityEngine.Jobs;
+using UnityEngine.Serialization;
 using Random = UnityEngine.Random;
 
 namespace Demo.Boids
@@ -18,14 +23,16 @@ namespace Demo.Boids
         [Serializable]
         private struct BoidData
         {
-            public GameObject Prefab;
-            
             [Header("Move")]
             public float MinSpeed;
             public float MaxSpeed;
 
             [Header("Spatial Grid (WIP)")]
-            public float VisionRadius;
+            public float CellSize;
+            
+            [Header("Probes")]
+            public float ProbeLength;
+            public float ProbeAngle;
 
             [Header("Steering")]
             public float SeparationRadius;
@@ -44,256 +51,351 @@ namespace Demo.Boids
             [Range(-1, 1)]
             public float AlignmentDot;
             public float AlignmentWeight;
-
-            [Header("Wander")]
-            public float WanderLength;
-            public float WanderRadius;
-            public float WanderRate;
-            
-            [Header("Contain")]
-            public float ContainLength;
-            public float ContainAngle;
         }
+        
+        [SerializeField]
+        private GameObject m_prefab;
 
         [Space, SerializeField]
         private WorldData m_worldData;
         [Space, SerializeField]
         private BoidData m_boidData;
-        [Space, SerializeField]
-        private GameState m_state;
         
-        private Transform[] m_transforms;
-        private Vector3[] m_velocities;
-        private Vector3[] m_steerings;
-            
-        private Vector3[] m_containmentProbes;
+        private TransformAccessArray m_transforms;
+        private NativeArray<float3> m_positions;
+        private NativeArray<float3> m_velocities;
+        private NativeArray<float3> m_steerings;
+        // TODO: Look information about NativeParallelMultiHashMap.
+        private NativeParallelMultiHashMap<int, int> m_spatialHashMap;
+        private NativeArray<float3> m_probes;
+
         private const int PROBE_OFFSET = 5;
     
         private void Awake()
         {
-            m_transforms = new Transform[m_worldData.Count];
-            m_velocities = new Vector3[m_worldData.Count];
-            m_steerings = new Vector3[m_worldData.Count];
-
-            m_containmentProbes = new Vector3[m_worldData.Count * 5];
+            m_positions = new NativeArray<float3>(m_worldData.Count, Allocator.Persistent);
+            m_velocities = new NativeArray<float3>(m_worldData.Count, Allocator.Persistent);
+            m_steerings = new NativeArray<float3>(m_worldData.Count, Allocator.Persistent);
+            m_spatialHashMap = new NativeParallelMultiHashMap<int, int>(m_worldData.Count, Allocator.Persistent);
+            m_probes = new NativeArray<float3>(m_worldData.Count * PROBE_OFFSET, Allocator.Persistent);
         }
-    
+
+        private void OnDestroy()
+        {
+            m_transforms.Dispose();
+            m_positions.Dispose();
+            m_velocities.Dispose();
+            m_steerings.Dispose();
+            m_spatialHashMap.Dispose();
+            m_probes.Dispose();
+        }
+
         private void Start()
         {
-            for (int i = 0; i < m_worldData.Count; i++)
+            InstantiateBoids();
+        }
+        
+        private void InstantiateBoids()
+        {
+            Transform[] transforms = new Transform[m_worldData.Count];
+            for (int index = 0; index < m_worldData.Count; index++)
             {
                 Vector3 randomPosition = Random.insideUnitSphere * m_worldData.SpawnRadius;
-                GameObject boid = Instantiate(m_boidData.Prefab, randomPosition, Quaternion.identity);
-                boid.name = $"Boids_{i}";
-                
-                m_transforms[i] = boid.transform;
+                GameObject boid = Instantiate(m_prefab, randomPosition, Quaternion.identity);
+                boid.name = $"Boids_{index}";
+
+                transforms[index] = boid.transform;
+                m_positions[index] = boid.transform.position;
             }
+            m_transforms = new TransformAccessArray(transforms);
         }
 
         private void Update()
         {
-#if UNITY_EDITOR
-            m_debugData.CleanData();
-#endif
+            m_spatialHashMap.Clear();
 
-            int[] neighbours = new int[m_worldData.Count];
-
-            for (int i = 0; i < m_worldData.Count; i++)
+            UpdateHashJob hashJob = new UpdateHashJob
             {
-                UpdateGrid(i, neighbours, out int count);
-                UpdateProbes(i);
-                UpdateLogic(i, neighbours, count);
-                UpdateMovement(i);
-                UpdateRotation(i);
+                Positions = m_positions,
+                SpatialHashMap = m_spatialHashMap.AsParallelWriter(),
+                CellSize = m_boidData.CellSize
+            };
+            JobHandle gridHandle = hashJob.Schedule(m_worldData.Count, 64);
+            
+            UpdateProbesJob probesJob = new UpdateProbesJob
+            {
+                Positions = m_positions,
+                Velocities = m_velocities,
+                Probes = m_probes,
+                ProbeLength = m_boidData.ProbeLength,
+                ProbeAngle = m_boidData.ProbeAngle
+            };
+            JobHandle probesHandle = probesJob.Schedule(m_worldData.Count, 64);
+            
+            JobHandle setupHandle = JobHandle.CombineDependencies(gridHandle, probesHandle);
+            
+            FlockSteeringJob flockJob = new FlockSteeringJob
+            {
+                Positions = m_positions,
+                Velocities = m_velocities,
+                Steerings = m_steerings,
+                SpatialHashMap = m_spatialHashMap,
+                CellSize = m_boidData.CellSize,
+                SeparationRadius = m_boidData.SeparationRadius,
+                SeparationThreshold = m_boidData.SeparationDot,
+                SeparationWeight = m_boidData.SeparationWeight,
+                CohesionRadius = m_boidData.CohesionRadius,
+                CohesionThreshold = m_boidData.CohesionDot,
+                CohesionWeight = m_boidData.CohesionWeight,
+                AlignmentRadius = m_boidData.AlignmentRadius,
+                AlignmentThreshold = m_boidData.AlignmentDot,
+                AlignmentWeight = m_boidData.AlignmentWeight,
+                MaxSpeed = m_boidData.MaxSpeed
+            };
+            JobHandle flockHandle = flockJob.Schedule(m_worldData.Count, 64, setupHandle);
+            
+            ContainmentSteeringJob containmentJob = new ContainmentSteeringJob
+            {
+                Positions = m_positions,
+                Velocities = m_velocities,
+                Steerings = m_steerings,
+                Probes = m_probes,
+                WorldRadius = m_worldData.WorldRadius,
+                MaxSpeed = m_boidData.MaxSpeed
+            };
+            JobHandle containmentHandle = containmentJob.Schedule(m_worldData.Count, 64, flockHandle);
+            
+            UpdateMovementJob movementJob = new UpdateMovementJob
+            {
+                Positions = m_positions,
+                Velocities = m_velocities,
+                Steerings = m_steerings,
+                MaxSpeed = m_boidData.MaxSpeed,
+                DeltaTime = Time.deltaTime
+            };
+            JobHandle moveHandle = movementJob.Schedule(m_transforms, containmentHandle);
+            
+            moveHandle.Complete();
+            
+#if UNITY_EDITOR
+            int index = m_debugData.BoidIndex;
+            m_debugData.Position = m_transforms[index].position;
+            m_debugData.Velocity = m_velocities[index];
+            m_debugData.Steering = m_steerings[index];
+#endif
+        }
+
+        private struct UpdateHashJob : IJobParallelFor
+        {
+            [ReadOnly]
+            public NativeArray<float3> Positions;
+            // TODO: Look information about ParallelWriter.
+            public NativeParallelMultiHashMap<int, int>.ParallelWriter SpatialHashMap;
+            public float CellSize;
+            
+            public void Execute(int index)
+            {
+                int3 gridPosition = (int3)math.floor(Positions[index] / CellSize);
+                int hash = GetCellHash(gridPosition);
+                SpatialHashMap.Add(hash, index);
             }
         }
 
-        private void UpdateGrid(int index, int[] neighbours, out int count)
+        private struct UpdateProbesJob : IJobParallelFor
         {
-            count = 0;
-            for (int j = 0; j < m_worldData.Count; j++)
+            [ReadOnly]
+            public NativeArray<float3> Positions;
+            [ReadOnly]
+            public NativeArray<float3> Velocities;
+            [NativeDisableParallelForRestriction]
+            public NativeArray<float3> Probes;
+            public float ProbeLength;
+            public float ProbeAngle;
+            
+            public void Execute(int index)
             {
-                if (index == j) continue;
+                float3 originPosition = Positions[index];
+
+                if (math.lengthsq(Velocities[index]) < 0) return;
                 
-                Vector3 vectorToNeighbour = m_transforms[j].position - m_transforms[index].position;
-                bool insideVisionRadius = vectorToNeighbour.sqrMagnitude < m_boidData.VisionRadius * m_boidData.VisionRadius;
-                
-                if (insideVisionRadius)
+                float length = math.length(Velocities[index]) * ProbeLength;
+                float3 forward = math.normalize(Velocities[index]);
+
+                if (index % PROBE_OFFSET == 0)
                 {
-                    neighbours[count] = j;
-                    count++;
+                    Probes[index] = originPosition + forward * length;
+                    return;
                 }
-            }
-        }
-
-        private void UpdateProbes(int index)
-        {
-            Vector3 originPosition = m_transforms[index].position;
-            Vector3 forward = m_velocities[index].normalized;
-            float length = m_velocities[index].magnitude * m_boidData.ContainLength;
-            float spreadAngle = m_boidData.ContainAngle;
-            Quaternion velocityRotation = Quaternion.LookRotation(forward, m_transforms[index].up);
-
-            m_containmentProbes[PROBE_OFFSET * index + 0] = originPosition + forward * length;
-            m_containmentProbes[PROBE_OFFSET * index + 1] = originPosition + velocityRotation * Quaternion.AngleAxis(-spreadAngle, Vector3.right) * Vector3.forward * length;
-            m_containmentProbes[PROBE_OFFSET * index + 2] = originPosition + velocityRotation * Quaternion.AngleAxis(spreadAngle, Vector3.right) * Vector3.forward * length;
-            m_containmentProbes[PROBE_OFFSET * index + 3] = originPosition + velocityRotation * Quaternion.AngleAxis(-spreadAngle, Vector3.up) * Vector3.forward * length;
-            m_containmentProbes[PROBE_OFFSET * index + 4] = originPosition + velocityRotation * Quaternion.AngleAxis(spreadAngle, Vector3.up) * Vector3.forward * length;
-            
-#if UNITY_EDITOR
-            if (m_debugData.BoidIndex == index)
-            {
-                m_debugData.ContainProbes = new[]
-                {
-                    m_containmentProbes[PROBE_OFFSET * index + 0],
-                    m_containmentProbes[PROBE_OFFSET * index + 1],
-                    m_containmentProbes[PROBE_OFFSET * index + 2],
-                    m_containmentProbes[PROBE_OFFSET * index + 3],
-                    m_containmentProbes[PROBE_OFFSET * index + 4]
-                };
-            }
-#endif
-        }
-
-        private void UpdateLogic(int index, int[] neighbours, int neighbourCount)
-        {    
-            m_steerings[index] = GetFlockSteering(index, m_transforms, m_velocities, neighbours, neighbourCount, m_boidData);
-            m_steerings[index] += GetContainment();
-            
-            Vector3 GetContainment()
-            {
                 
-                Vector3[] myProbes =
-                {
-                    m_containmentProbes[PROBE_OFFSET * index + 0],
-                    m_containmentProbes[PROBE_OFFSET * index + 1],
-                    m_containmentProbes[PROBE_OFFSET * index + 2],
-                    m_containmentProbes[PROBE_OFFSET * index + 3],
-                    m_containmentProbes[PROBE_OFFSET * index + 4]
-                };
+                float3 right = math.normalize(math.cross(math.up(), forward));
+                float3 up = math.cross(forward, right);
 
-                Vector3 activeProbe = myProbes.FirstOrDefault(x => x.sqrMagnitude > m_worldData.WorldRadius * m_worldData.WorldRadius);
-                if (activeProbe != default)
-                     return GetContainmentSteering(index, m_transforms[index].position, m_velocities[index], activeProbe, m_worldData);
-                return Vector3.zero;
-            }
-        }
-
-        private void UpdateMovement(int index)
-        {
-            m_velocities[index] += m_steerings[index] * Time.deltaTime;
-            m_velocities[index] = Vector3.ClampMagnitude(m_velocities[index], m_boidData.MaxSpeed);
-            m_transforms[index].position += m_velocities[index] * Time.deltaTime;
+                float3 ray = forward * length;
                 
-#if UNITY_EDITOR
-            if (m_debugData.BoidIndex == index)
-            {
-                m_debugData.Position = m_transforms[index].position;
-                m_debugData.Velocity = m_velocities[index];
-                m_debugData.Steering = m_steerings[index];
-            }
-#endif
-        }
-        
-        private void UpdateRotation(int index)
-        {
-            Quaternion lookAt = Quaternion.LookRotation(m_velocities[index]);
-            m_transforms[index].rotation = lookAt;
-        }
-        
-        private Vector3 GetFlockSteering(
-            int index, ReadOnlySpan<Transform> transforms, ReadOnlySpan<Vector3> velocities,
-            int[] neighbours, int neighbourCount,
-            BoidData boidData)
-        {
-            Vector3 steering = new Vector3();
-            Vector3 separationForce = new Vector3();
-            Vector3 cohesionForce = new Vector3();
-            Vector3 alignmentForce = new Vector3();
+                quaternion upTilt = quaternion.AxisAngle(right, ProbeAngle);
+                Probes[index * PROBE_OFFSET + 1] = originPosition + math.mul(upTilt, ray);
+                
+                quaternion downTilt = quaternion.AxisAngle(right, -ProbeAngle);
+                Probes[index * PROBE_OFFSET + 1] = originPosition + math.mul(downTilt, ray);
+                
+                quaternion rightTilt = quaternion.AxisAngle(up, ProbeAngle);
+                Probes[index * PROBE_OFFSET + 1] = originPosition + math.mul(rightTilt, ray);
 
-            int cohesionCount = 0;
-            int alignmentCount = 0;
+                quaternion leftTilt = quaternion.AxisAngle(up, -ProbeAngle);
+                Probes[index * PROBE_OFFSET + 1] = originPosition + math.mul(leftTilt, ray);
+                
+            }
+        }
+
+        private struct FlockSteeringJob : IJobParallelFor
+        {
+            [ReadOnly]
+            public NativeArray<float3> Positions;
+            [ReadOnly]
+            public NativeArray<float3> Velocities;
+            public NativeArray<float3> Steerings;
+            [ReadOnly]
+            public NativeParallelMultiHashMap<int, int> SpatialHashMap;
+            public float CellSize;
+
+            public float SeparationRadius;
+            public float SeparationThreshold;
+            public float SeparationWeight;
+            public float CohesionRadius;
+            public float CohesionThreshold;
+            public float CohesionWeight;
+            public float AlignmentRadius;
+            public float AlignmentThreshold;
+            public float AlignmentWeight;
+
+            public float MaxSpeed;
             
-            for (int j = 0; j < neighbourCount; j++)
+            public void Execute(int index)
             {
-                int nIndex = neighbours[j];
+                float3 steeringVector = new float3();
+                float3 separationForce = new float3();
+                float3 cohesionForce = new float3();
+                int cohesionCount = 0;
+                float3 alignmentForce = new float3();
+                int alignmentCount = 0;
+
+                int3 gridPosition = (int3)math.floor(Positions[index] / CellSize);
+                for (int x = -1; x <= 1; x++)
+                for (int y = -1; y <= 1; y++)
+                for (int z = -1; z <= 1; z++)
+                {
+                    int3 otherGridPosition = gridPosition + new int3(x, y, z);
+                    int hash = GetCellHash(otherGridPosition);
                     
-                Vector3 vectorToNeighbour = transforms[nIndex].position - transforms[index].position;
-                Vector3 vectorFromNeighbour = vectorToNeighbour * -1.0f;
-    
-                float dot = Vector3.Dot(velocities[index].normalized, vectorToNeighbour.normalized);
-                if (vectorToNeighbour.sqrMagnitude < m_boidData.SeparationRadius * m_boidData.SeparationRadius &&
-                    dot > m_boidData.SeparationDot)
-                {
-                    separationForce += vectorFromNeighbour / vectorFromNeighbour.magnitude;
-                }
+                    if (!SpatialHashMap.TryGetFirstValue(hash, out var other, out var iterator)) continue;
+                    do
+                    {
+                        if (index == other) continue;
+                        
+                        float3 vectorToNeighbour = Positions[other] - Positions[index];
+                        float3 vectorFromNeighbour = vectorToNeighbour * -1.0f;
 
-                if (vectorToNeighbour.sqrMagnitude < m_boidData.CohesionRadius * m_boidData.CohesionRadius &&
-                    dot > m_boidData.CohesionDot)
-                {
-                    cohesionForce += transforms[nIndex].position;
-                    cohesionCount++;   
-                }
+                        float lenSq = math.lengthsq(vectorToNeighbour);
+                        float velSq = math.lengthsq(Velocities[index]);
+                        
+                        float dot = 0;
+                        if (velSq > 0 && lenSq > 0)
+                        {
+                            dot = math.dot(math.normalize(Velocities[index]), math.normalize(vectorToNeighbour));
+                        }
+                    
+                        if (lenSq < SeparationRadius * SeparationRadius &&
+                            dot > SeparationThreshold)
+                        {
+                            separationForce += vectorFromNeighbour / math.length(vectorFromNeighbour);
+                        }
 
-                if (vectorToNeighbour.sqrMagnitude < m_boidData.AlignmentRadius * m_boidData.AlignmentRadius &&
-                    dot > m_boidData.AlignmentDot)
-                {
-                    alignmentForce += velocities[nIndex];
-                    alignmentCount++;
+                        if (lenSq < CohesionRadius * CohesionRadius &&
+                            dot > CohesionThreshold)
+                        {
+                            cohesionForce += Positions[other];
+                            cohesionCount++;   
+                        }
+
+                        if (lenSq < AlignmentRadius * AlignmentRadius &&
+                            dot > AlignmentThreshold)
+                        {
+                            alignmentForce += Velocities[other];
+                            alignmentCount++;
+                        }
+                    } while (SpatialHashMap.TryGetNextValue(out other, ref iterator));
+
                 }
-            }
             
-            steering += separationForce * boidData.SeparationWeight;
+                steeringVector += separationForce * SeparationWeight;
 
-            if (cohesionCount > 0)
-            {
-                cohesionForce = cohesionForce/cohesionCount - transforms[index].position;
-                steering += cohesionForce * boidData.CohesionWeight;
-            }
+                if (cohesionCount > 0)
+                {
+                    cohesionForce = cohesionForce/cohesionCount - Positions[index];
+                    steeringVector += cohesionForce * CohesionWeight;
+                }
 
-            if (alignmentCount > 0)
-            {
-                alignmentForce /= alignmentCount;
-                steering += alignmentForce * boidData.AlignmentWeight;
+                if (alignmentCount > 0)
+                {
+                    alignmentForce /= alignmentCount;
+                    steeringVector += alignmentForce * AlignmentWeight;
+                }
+
+                if (math.lengthsq(steeringVector) > 0)
+                {
+                    Steerings[index] = math.normalize(steeringVector) * MaxSpeed;
+                }
+                else
+                {
+                    Steerings[index] = float3.zero;
+                }
             }
-            
-#if UNITY_EDITOR
-            if (m_debugData.BoidIndex == index)
-            {
-                m_debugData.SeparationForce = separationForce;
-                m_debugData.CohesionForce = cohesionForce;
-                m_debugData.AlignmentForce = alignmentForce;
-            }
-#endif
-            return steering.normalized * m_boidData.MaxSpeed;
         }
 
-        private Vector3 GetContainmentSteering(
-            int index, Vector3 position, Vector3 velocity,
-            Vector3 activeProbe, WorldData worldData)
+        private struct ContainmentSteeringJob : IJobParallelFor
         {
-            Vector3 collisionPoint = GetCollisionPoint(position, (activeProbe - position).normalized, worldData.WorldRadius);
-            Vector3 perpendicular = GetPerpendicular(-collisionPoint.normalized, -velocity.normalized);
+            [ReadOnly]
+            public NativeArray<float3> Positions;
+            [ReadOnly]
+            public NativeArray<float3> Velocities;
+            public NativeArray<float3> Steerings;
+            [ReadOnly]
+            public NativeArray<float3> Probes;
+
+            public float WorldRadius;
+            public float MaxSpeed;
             
-#if UNITY_EDITOR
-            if (m_debugData.BoidIndex == index)
+            public void Execute(int index)
             {
-                m_debugData.ContainPerpendicular = perpendicular;
-                m_debugData.ContainCollisionPoint = collisionPoint;
+                for (int i = 0; i < PROBE_OFFSET; i++)
+                {
+                    float3 probe = Probes[PROBE_OFFSET * index + i]; 
+                    if (math.lengthsq(probe) < WorldRadius * WorldRadius) continue;
+
+                    float3 directionToProbe = math.normalize(probe - Positions[index]);
+                    float3 collisionPoint = GetCollisionPoint(Positions[index], directionToProbe, WorldRadius);
+
+                    if (math.lengthsq(Velocities[index]) == 0.0f) return;
+
+                    float3 collisionNormal = math.normalize(-collisionPoint);
+                    float3 velocityNormal = math.normalize(-Velocities[index]);
+                    float3 perpendicular = GetPerpendicular(collisionNormal, velocityNormal);
+                
+                    Steerings[index] += perpendicular * MaxSpeed;
+                }
             }
-#endif
             
-            Vector3 GetCollisionPoint(Vector3 origin, Vector3 rayDirection, float radius)
+            private float3 GetCollisionPoint(float3 origin, float3 rayDirection, float radius)
             {
                 float a = 1;
-                float b = 2.0f * Vector3.Dot(rayDirection, origin);
-                float c = Vector3.Dot(origin, origin) - radius * radius;
+                float b = 2.0f * math.dot(rayDirection, origin);
+                float c = math.dot(origin, origin) - radius * radius;
                 SolveQuadratic(a, b, c, out float t0, out float t1);
 
                 return origin + rayDirection * t1;
             }
             
-            void SolveQuadratic(float a, float b, float c, out float t0, out float t1)
+            private void SolveQuadratic(float a, float b, float c, out float t0, out float t1)
             {
                 t0 = t1 = 0;
                 
@@ -317,13 +419,53 @@ namespace Demo.Boids
                 if (t0 > t1) (t0, t1) = (t1, t0);
             }
 
-            Vector3 GetPerpendicular(Vector3 collisionNormal, Vector3 normalForward)
+            float3 GetPerpendicular(float3 collisionNormal, float3 forwardNormal)
             {
-                Vector3 dotVector = normalForward * Vector3.Dot(collisionNormal, normalForward);
-                return (collisionNormal - dotVector).normalized;
+                float3 dotVector = forwardNormal * math.dot(collisionNormal, forwardNormal);
+                return math.normalize(collisionNormal - dotVector);
             }
+        }
 
-            return perpendicular * m_boidData.MaxSpeed;
+        private struct UpdateMovementJob : IJobParallelForTransform
+        {
+            public NativeArray<float3> Positions;
+            public NativeArray<float3> Velocities;
+            [ReadOnly]
+            public NativeArray<float3> Steerings;
+
+            public float MaxSpeed;
+            public float DeltaTime;
+            
+            public void Execute(int index, TransformAccess transform)
+            {
+                Velocities[index] += Steerings[index] * DeltaTime;
+                float velocitySq = math.lengthsq(Velocities[index]);
+
+                if (velocitySq <= 0) return;
+                
+                float3 forward = math.normalize(Velocities[index]);
+                if (velocitySq > MaxSpeed * MaxSpeed)
+                {
+                    Velocities[index] = forward * MaxSpeed;
+                }
+                
+                Positions[index] += Velocities[index] * DeltaTime;
+                transform.position = Positions[index];
+                
+                quaternion lookAt = quaternion.LookRotation(forward, math.up());
+                transform.rotation = lookAt;
+            }
+        }
+        
+        private static int GetCellHash(int3 gridPosition)
+        {
+            unchecked
+            {
+                int hash = gridPosition.x * 73856093;
+                hash ^= gridPosition.y * 19349663;
+                hash ^= gridPosition.z * 83492791;
+                return hash;
+            }
         }
 
 #region Development Methods
@@ -332,44 +474,25 @@ namespace Demo.Boids
         public struct DebugData
         {
             public bool DrawGizmos;
-            public bool DrawBoidGizmos;
+            public GizmosType GizmosType;
             public float PointRadius;
             
             [Space]
             public int BoidIndex;
 
             [NonSerialized]
-            public Vector3 Position;
+            public float3 Position;
             [NonSerialized]
-            public Vector3 Velocity;
+            public float3 Velocity;
             [NonSerialized]
-            public Vector3 Steering;
-            [NonSerialized]
-            public Vector3 SeparationForce;
-            [NonSerialized]
-            public Vector3 CohesionForce;
-            [NonSerialized]
-            public Vector3 AlignmentForce;
-            [NonSerialized]
-            public Vector3[] ContainProbes;
-            [NonSerialized]
-            public Vector3 ContainPerpendicular;
-            [NonSerialized]
-            public Vector3 ContainCollisionPoint;
+            public float3 Steering;
+        }
 
-            public void CleanData()
-            {
-                ContainPerpendicular = Position;
-                ContainCollisionPoint = Position;
-                
-                SeparationForce = Vector3.zero;
-                CohesionForce = Vector3.zero;
-                AlignmentForce = Vector3.zero;
-                
-                Position = Vector3.zero;
-                Velocity = Vector3.zero;
-                Steering = Vector3.zero;
-            }
+        [Serializable]
+        public struct GizmosType
+        {
+            public bool WorldGizmo;
+            public bool BoidGizmo;
         }
 
         [Space]
@@ -380,12 +503,22 @@ namespace Demo.Boids
         {
             if (!m_debugData.DrawGizmos) return;
 
+            if (!m_debugData.GizmosType.WorldGizmo) return;
+            DrawWorld();
+
+            if (!m_debugData.GizmosType.BoidGizmo) return;
+            DrawBoid();
+        }
+
+        private void DrawWorld()
+        {
             Gizmos.color = Color.black;
             Gizmos.DrawWireSphere(Vector3.zero, m_worldData.WorldRadius);
             Gizmos.DrawWireSphere(Vector3.zero, m_worldData.SpawnRadius);
+        }
 
-            if (!m_debugData.DrawBoidGizmos) return;
-            
+        private void DrawBoid()
+        {
             Gizmos.color = Color.red;
             Gizmos.DrawSphere(m_debugData.Position + m_debugData.Velocity + m_debugData.Steering, m_debugData.PointRadius);
             Gizmos.DrawLine(m_debugData.Position + m_debugData.Velocity, m_debugData.Position + m_debugData.Velocity + m_debugData.Steering);
@@ -393,41 +526,6 @@ namespace Demo.Boids
             Gizmos.color = Color.blue;
             Gizmos.DrawSphere(m_debugData.Position + m_debugData.Velocity, m_debugData.PointRadius);
             Gizmos.DrawLine(m_debugData.Position, m_debugData.Position + m_debugData.Velocity);
-            
-            Gizmos.color = Color.green;
-            if (m_debugData.ContainProbes != null)
-            {
-                for (int i = 0; i < m_debugData.ContainProbes.Length; i++)
-                {
-                    Gizmos.DrawLine(m_debugData.Position, m_debugData.ContainProbes[i]);
-                }
-            }
-
-            DrawContain();
-            DrawFlock();
-        }
-        
-        private void DrawContain()
-        {
-            Gizmos.color = Color.white;
-            Gizmos.DrawRay(m_debugData.Position, m_debugData.ContainPerpendicular);
-            Gizmos.DrawLine(m_debugData.Position, m_debugData.ContainCollisionPoint);
-            Gizmos.DrawSphere(m_debugData.ContainCollisionPoint, m_debugData.PointRadius);
-        }
-
-        private void DrawFlock()
-        {
-            Gizmos.color = Color.cyan;
-            Gizmos.DrawLine(m_debugData.Position, m_debugData.Position + m_debugData.SeparationForce);
-            Gizmos.DrawSphere(m_debugData.Position + m_debugData.SeparationForce, m_debugData.PointRadius);
-            
-            Gizmos.color = Color.magenta;
-            Gizmos.DrawLine(m_debugData.Position, m_debugData.Position + m_debugData.CohesionForce);
-            Gizmos.DrawSphere(m_debugData.Position + m_debugData.CohesionForce, m_debugData.PointRadius);
-            
-            Gizmos.color = Color.yellow;
-            Gizmos.DrawLine(m_debugData.Position, m_debugData.Position + m_debugData.AlignmentForce);
-            Gizmos.DrawSphere(m_debugData.Position + m_debugData.AlignmentForce, m_debugData.PointRadius);
         }
 #endif
 #endregion
