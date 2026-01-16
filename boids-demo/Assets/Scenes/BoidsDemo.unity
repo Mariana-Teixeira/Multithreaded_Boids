@@ -165,14 +165,14 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::DemoManager
   m_prefab: {fileID: 948602484209512612, guid: 287448af564faa34787d9fd47013348f, type: 3}
   m_worldData:
-    WorldRadius: 50
-    SpawnRadius: 25
-    Count: 500
+    WorldRadius: 100
+    SpawnRadius: 50
+    Count: 5000
   m_boidData:
     MinSpeed: 4
     MaxSpeed: 8
-    CellSize: 0
-    ProbeLength: 3
+    CellSize: 10
+    ProbeLength: 1.5
     ProbeAngle: 90
     SeparationRadius: 5
     SeparationDot: -0.707
@@ -184,7 +184,7 @@ MonoBehaviour:
     AlignmentDot: 0.7
     AlignmentWeight: 8
   m_debugData:
-    DrawGizmos: 1
+    DrawGizmos: 0
     GizmosType:
       WorldGizmo: 1
       BoidGizmo: 1

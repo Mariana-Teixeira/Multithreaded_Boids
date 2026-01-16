@@ -1,15 +1,15 @@
 using System;
-using System.Net;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
 using UnityEngine;
+using Unity.Burst;
 using UnityEngine.Jobs;
-using UnityEngine.Serialization;
 using Random = UnityEngine.Random;
 
 namespace Demo.Boids
 {
+    [BurstCompile]
     public class DemoManager : MonoBehaviour
     {
         [Serializable]
@@ -17,6 +17,7 @@ namespace Demo.Boids
         {
             public float WorldRadius;
             public float SpawnRadius;
+            public float CellSize;
             public int Count;
         }
         
@@ -26,9 +27,6 @@ namespace Demo.Boids
             [Header("Move")]
             public float MinSpeed;
             public float MaxSpeed;
-
-            [Header("Spatial Grid (WIP)")]
-            public float CellSize;
             
             [Header("Probes")]
             public float ProbeLength;
@@ -63,17 +61,20 @@ namespace Demo.Boids
         
         private TransformAccessArray m_transforms;
         private NativeArray<float3> m_positions;
+        private NativeArray<quaternion> m_rotations;
         private NativeArray<float3> m_velocities;
         private NativeArray<float3> m_steerings;
-        // TODO: Look information about NativeParallelMultiHashMap.
         private NativeParallelMultiHashMap<int, int> m_spatialHashMap;
         private NativeArray<float3> m_probes;
+
+        private JobHandle m_boidsHandle;
 
         private const int PROBE_OFFSET = 5;
     
         private void Awake()
         {
             m_positions = new NativeArray<float3>(m_worldData.Count, Allocator.Persistent);
+            m_rotations = new NativeArray<quaternion>(m_worldData.Count, Allocator.Persistent);
             m_velocities = new NativeArray<float3>(m_worldData.Count, Allocator.Persistent);
             m_steerings = new NativeArray<float3>(m_worldData.Count, Allocator.Persistent);
             m_spatialHashMap = new NativeParallelMultiHashMap<int, int>(m_worldData.Count, Allocator.Persistent);
@@ -82,12 +83,15 @@ namespace Demo.Boids
 
         private void OnDestroy()
         {
+            m_boidsHandle.Complete();
+            
             m_transforms.Dispose();
             m_positions.Dispose();
+            m_rotations.Dispose();
             m_velocities.Dispose();
             m_steerings.Dispose();
             m_spatialHashMap.Dispose();
-            m_probes.Dispose();
+            m_probes.Dispose(); 
         }
 
         private void Start()
@@ -112,15 +116,24 @@ namespace Demo.Boids
 
         private void Update()
         {
+            m_boidsHandle.Complete();
+            
+#if UNITY_EDITOR
+            int index = m_debugData.BoidIndex;
+            m_debugData.Position = m_transforms[index].position;
+            m_debugData.Velocity = m_velocities[index];
+            m_debugData.Steering = m_steerings[index];
+#endif
+            
             m_spatialHashMap.Clear();
 
             UpdateHashJob hashJob = new UpdateHashJob
             {
                 Positions = m_positions,
                 SpatialHashMap = m_spatialHashMap.AsParallelWriter(),
-                CellSize = m_boidData.CellSize
+                CellSize = m_worldData.CellSize
             };
-            JobHandle gridHandle = hashJob.Schedule(m_worldData.Count, 64);
+            JobHandle hashHandle = hashJob.Schedule(m_worldData.Count, 64);
             
             UpdateProbesJob probesJob = new UpdateProbesJob
             {
@@ -132,7 +145,7 @@ namespace Demo.Boids
             };
             JobHandle probesHandle = probesJob.Schedule(m_worldData.Count, 64);
             
-            JobHandle setupHandle = JobHandle.CombineDependencies(gridHandle, probesHandle);
+            JobHandle setupHandle = JobHandle.CombineDependencies(hashHandle, probesHandle);
             
             FlockSteeringJob flockJob = new FlockSteeringJob
             {
@@ -140,7 +153,7 @@ namespace Demo.Boids
                 Velocities = m_velocities,
                 Steerings = m_steerings,
                 SpatialHashMap = m_spatialHashMap,
-                CellSize = m_boidData.CellSize,
+                CellSize = m_worldData.CellSize,
                 SeparationRadius = m_boidData.SeparationRadius,
                 SeparationThreshold = m_boidData.SeparationDot,
                 SeparationWeight = m_boidData.SeparationWeight,
@@ -168,28 +181,20 @@ namespace Demo.Boids
             UpdateMovementJob movementJob = new UpdateMovementJob
             {
                 Positions = m_positions,
+                Rotations = m_rotations,
                 Velocities = m_velocities,
                 Steerings = m_steerings,
                 MaxSpeed = m_boidData.MaxSpeed,
                 DeltaTime = Time.deltaTime
             };
-            JobHandle moveHandle = movementJob.Schedule(m_transforms, containmentHandle);
-            
-            moveHandle.Complete();
-            
-#if UNITY_EDITOR
-            int index = m_debugData.BoidIndex;
-            m_debugData.Position = m_transforms[index].position;
-            m_debugData.Velocity = m_velocities[index];
-            m_debugData.Steering = m_steerings[index];
-#endif
+            m_boidsHandle = movementJob.Schedule(m_transforms, containmentHandle);
         }
-
+        
+        [BurstCompile]
         private struct UpdateHashJob : IJobParallelFor
         {
             [ReadOnly]
             public NativeArray<float3> Positions;
-            // TODO: Look information about ParallelWriter.
             public NativeParallelMultiHashMap<int, int>.ParallelWriter SpatialHashMap;
             public float CellSize;
             
@@ -200,7 +205,8 @@ namespace Demo.Boids
                 SpatialHashMap.Add(hash, index);
             }
         }
-
+        
+        [BurstCompile]
         private struct UpdateProbesJob : IJobParallelFor
         {
             [ReadOnly]
@@ -215,38 +221,31 @@ namespace Demo.Boids
             public void Execute(int index)
             {
                 float3 originPosition = Positions[index];
-
-                if (math.lengthsq(Velocities[index]) < 0) return;
-                
-                float length = math.length(Velocities[index]) * ProbeLength;
-                float3 forward = math.normalize(Velocities[index]);
-
-                if (index % PROBE_OFFSET == 0)
-                {
-                    Probes[index] = originPosition + forward * length;
-                    return;
-                }
-                
-                float3 right = math.normalize(math.cross(math.up(), forward));
-                float3 up = math.cross(forward, right);
+                float length = SafeLength(Velocities[index]) * ProbeLength;
+                float3 forward = SafeNormalize(Velocities[index]);
 
                 float3 ray = forward * length;
+                float3 cross = SafeCross(math.up(), forward);
+                float3 right = SafeNormalize(cross);
+                float3 up = math.cross(forward, right);
                 
+                Probes[index * PROBE_OFFSET] = originPosition + ray;
+
                 quaternion upTilt = quaternion.AxisAngle(right, ProbeAngle);
                 Probes[index * PROBE_OFFSET + 1] = originPosition + math.mul(upTilt, ray);
-                
+
                 quaternion downTilt = quaternion.AxisAngle(right, -ProbeAngle);
-                Probes[index * PROBE_OFFSET + 1] = originPosition + math.mul(downTilt, ray);
-                
+                Probes[index * PROBE_OFFSET + 2] = originPosition + math.mul(downTilt, ray);
+
                 quaternion rightTilt = quaternion.AxisAngle(up, ProbeAngle);
-                Probes[index * PROBE_OFFSET + 1] = originPosition + math.mul(rightTilt, ray);
+                Probes[index * PROBE_OFFSET + 3] = originPosition + math.mul(rightTilt, ray);
 
                 quaternion leftTilt = quaternion.AxisAngle(up, -ProbeAngle);
-                Probes[index * PROBE_OFFSET + 1] = originPosition + math.mul(leftTilt, ray);
-                
+                Probes[index * PROBE_OFFSET + 4] = originPosition + math.mul(leftTilt, ray);
             }
         }
 
+        [BurstCompile]
         private struct FlockSteeringJob : IJobParallelFor
         {
             [ReadOnly]
@@ -275,50 +274,45 @@ namespace Demo.Boids
                 float3 steeringVector = new float3();
                 float3 separationForce = new float3();
                 float3 cohesionForce = new float3();
-                int cohesionCount = 0;
                 float3 alignmentForce = new float3();
+                
+                int cohesionCount = 0;
                 int alignmentCount = 0;
 
-                int3 gridPosition = (int3)math.floor(Positions[index] / CellSize);
+                float3 division = SafeDivide(Positions[index], CellSize);
+                int3 gridPosition = (int3)math.floor(division);
                 for (int x = -1; x <= 1; x++)
                 for (int y = -1; y <= 1; y++)
                 for (int z = -1; z <= 1; z++)
                 {
                     int3 otherGridPosition = gridPosition + new int3(x, y, z);
                     int hash = GetCellHash(otherGridPosition);
+
+                    bool fetchValue = SpatialHashMap.TryGetFirstValue(hash, out var other, out var iterator);
+                    if (!fetchValue) continue;
                     
-                    if (!SpatialHashMap.TryGetFirstValue(hash, out var other, out var iterator)) continue;
                     do
                     {
                         if (index == other) continue;
                         
                         float3 vectorToNeighbour = Positions[other] - Positions[index];
-                        float3 vectorFromNeighbour = vectorToNeighbour * -1.0f;
-
-                        float lenSq = math.lengthsq(vectorToNeighbour);
-                        float velSq = math.lengthsq(Velocities[index]);
+                        float distanceSqToNeighbour = math.lengthsq(vectorToNeighbour);
                         
-                        float dot = 0;
-                        if (velSq > 0 && lenSq > 0)
-                        {
-                            dot = math.dot(math.normalize(Velocities[index]), math.normalize(vectorToNeighbour));
-                        }
+                        float dot = math.dot(SafeNormalize(Velocities[index]), SafeNormalize(vectorToNeighbour));
                     
-                        if (lenSq < SeparationRadius * SeparationRadius &&
-                            dot > SeparationThreshold)
+                        if (distanceSqToNeighbour < SeparationRadius * SeparationRadius && dot > SeparationThreshold)
                         {
-                            separationForce += vectorFromNeighbour / math.length(vectorFromNeighbour);
+                            float distanceToNeighbour = math.sqrt(distanceSqToNeighbour);
+                            separationForce += SafeDivide(-vectorToNeighbour, distanceToNeighbour);
                         }
 
-                        if (lenSq < CohesionRadius * CohesionRadius &&
-                            dot > CohesionThreshold)
+                        if (distanceSqToNeighbour < CohesionRadius * CohesionRadius && dot > CohesionThreshold)
                         {
                             cohesionForce += Positions[other];
                             cohesionCount++;   
                         }
 
-                        if (lenSq < AlignmentRadius * AlignmentRadius &&
-                            dot > AlignmentThreshold)
+                        if (distanceSqToNeighbour < AlignmentRadius * AlignmentRadius && dot > AlignmentThreshold)
                         {
                             alignmentForce += Velocities[other];
                             alignmentCount++;
@@ -331,27 +325,21 @@ namespace Demo.Boids
 
                 if (cohesionCount > 0)
                 {
-                    cohesionForce = cohesionForce/cohesionCount - Positions[index];
+                    cohesionForce = cohesionForce / cohesionCount - Positions[index];
                     steeringVector += cohesionForce * CohesionWeight;
                 }
 
                 if (alignmentCount > 0)
                 {
-                    alignmentForce /= alignmentCount;
+                    alignmentForce = alignmentForce / alignmentCount;
                     steeringVector += alignmentForce * AlignmentWeight;
                 }
 
-                if (math.lengthsq(steeringVector) > 0)
-                {
-                    Steerings[index] = math.normalize(steeringVector) * MaxSpeed;
-                }
-                else
-                {
-                    Steerings[index] = float3.zero;
-                }
+                Steerings[index] = SafeNormalize(steeringVector) * MaxSpeed;
             }
         }
 
+        [BurstCompile]
         private struct ContainmentSteeringJob : IJobParallelFor
         {
             [ReadOnly]
@@ -369,19 +357,18 @@ namespace Demo.Boids
             {
                 for (int i = 0; i < PROBE_OFFSET; i++)
                 {
-                    float3 probe = Probes[PROBE_OFFSET * index + i]; 
+                    float3 probe = Probes[index * PROBE_OFFSET + i];
                     if (math.lengthsq(probe) < WorldRadius * WorldRadius) continue;
 
-                    float3 directionToProbe = math.normalize(probe - Positions[index]);
+                    float3 directionToProbe = SafeNormalize(probe - Positions[index]);
                     float3 collisionPoint = GetCollisionPoint(Positions[index], directionToProbe, WorldRadius);
 
-                    if (math.lengthsq(Velocities[index]) == 0.0f) return;
-
-                    float3 collisionNormal = math.normalize(-collisionPoint);
-                    float3 velocityNormal = math.normalize(-Velocities[index]);
+                    float3 collisionNormal = SafeNormalize(-collisionPoint);
+                    float3 velocityNormal = SafeNormalize(-Velocities[index]);
                     float3 perpendicular = GetPerpendicular(collisionNormal, velocityNormal);
                 
                     Steerings[index] += perpendicular * MaxSpeed;
+                    return;
                 }
             }
             
@@ -422,13 +409,15 @@ namespace Demo.Boids
             float3 GetPerpendicular(float3 collisionNormal, float3 forwardNormal)
             {
                 float3 dotVector = forwardNormal * math.dot(collisionNormal, forwardNormal);
-                return math.normalize(collisionNormal - dotVector);
+                return SafeNormalize(collisionNormal - dotVector);
             }
         }
 
+        [BurstCompile]
         private struct UpdateMovementJob : IJobParallelForTransform
         {
             public NativeArray<float3> Positions;
+            public NativeArray<quaternion> Rotations;
             public NativeArray<float3> Velocities;
             [ReadOnly]
             public NativeArray<float3> Steerings;
@@ -439,11 +428,9 @@ namespace Demo.Boids
             public void Execute(int index, TransformAccess transform)
             {
                 Velocities[index] += Steerings[index] * DeltaTime;
-                float velocitySq = math.lengthsq(Velocities[index]);
 
-                if (velocitySq <= 0) return;
-                
-                float3 forward = math.normalize(Velocities[index]);
+                float velocitySq = math.lengthsq(Velocities[index]);
+                float3 forward = SafeNormalize(Velocities[index]);
                 if (velocitySq > MaxSpeed * MaxSpeed)
                 {
                     Velocities[index] = forward * MaxSpeed;
@@ -452,20 +439,57 @@ namespace Demo.Boids
                 Positions[index] += Velocities[index] * DeltaTime;
                 transform.position = Positions[index];
                 
-                quaternion lookAt = quaternion.LookRotation(forward, math.up());
-                transform.rotation = lookAt;
+                Rotations[index] = SafeLookRotation(forward, math.up());
+                transform.rotation = Rotations[index];
             }
         }
         
+        // TODO: Study bit and bit operations.
         private static int GetCellHash(int3 gridPosition)
         {
-            unchecked
+            unchecked // if the result overflows, wrap around the value
             {
-                int hash = gridPosition.x * 73856093;
-                hash ^= gridPosition.y * 19349663;
-                hash ^= gridPosition.z * 83492791;
+                int hash = gridPosition.x * 20011;
+                hash = hash ^ gridPosition.y * 20287;
+                hash = hash ^ gridPosition.z * 20563;
                 return hash;
             }
+        }
+        
+        private static float3 SafeNormalize(float3 vector)
+        {
+            return math.lengthsq(vector) > math.EPSILON ? math.normalize(vector) : float3.zero;
+        }
+
+        private static float SafeLength(float3 vector)
+        {
+            return math.lengthsq(vector) > math.EPSILON ? math.length(vector) : 0.0f;
+        }
+
+        private static float3 SafeDivide(float3 numerator, float denominator)
+        {
+            return math.abs(denominator) < math.EPSILON ? float3.zero : numerator / denominator;
+        }
+
+        private static quaternion SafeLookRotation(float3 forward, float3 up)
+        {
+            bool forwardNA = math.lengthsq(forward) < math.EPSILON;
+            if (forwardNA) return quaternion.identity;
+            
+            float dot = math.dot(forward, up);
+            bool parallelNA = math.abs(dot) > 0.99f;
+            if (parallelNA) up = math.right();
+            
+            return quaternion.LookRotation(forward, up);
+        }
+
+        private static float3 SafeCross(float3 forward, float3 up)
+        {
+            float dot = math.dot(forward, up);
+            bool parallelNA = math.abs(dot) > 0.99f;
+            if (parallelNA) up = math.right();
+
+            return math.cross(forward, up);
         }
 
 #region Development Methods
@@ -492,6 +516,7 @@ namespace Demo.Boids
         public struct GizmosType
         {
             public bool WorldGizmo;
+            public bool GridGizmo;
             public bool BoidGizmo;
         }
 
@@ -503,11 +528,20 @@ namespace Demo.Boids
         {
             if (!m_debugData.DrawGizmos) return;
 
-            if (!m_debugData.GizmosType.WorldGizmo) return;
-            DrawWorld();
+            if (m_debugData.GizmosType.WorldGizmo)
+            {
+                DrawWorld();
+            }
 
-            if (!m_debugData.GizmosType.BoidGizmo) return;
-            DrawBoid();
+            if (m_debugData.GizmosType.GridGizmo)
+            {
+                DrawGrid();
+            }
+
+            if (m_debugData.GizmosType.BoidGizmo)
+            {
+                DrawBoid();
+            }
         }
 
         private void DrawWorld()
@@ -515,6 +549,21 @@ namespace Demo.Boids
             Gizmos.color = Color.black;
             Gizmos.DrawWireSphere(Vector3.zero, m_worldData.WorldRadius);
             Gizmos.DrawWireSphere(Vector3.zero, m_worldData.SpawnRadius);
+        }
+
+        private void DrawGrid()
+        {
+            Gizmos.color = Color.white;
+            int gridRadius = (int)(m_worldData.WorldRadius / m_worldData.CellSize);
+            for (int x = -gridRadius; x < gridRadius; x++)
+            for (int y = -gridRadius; y < gridRadius; y++)
+            for (int z = -gridRadius; z < gridRadius; z++)
+            {
+                float3 gridPosition = new float3(x, y, z);
+                float3 worldPosition = gridPosition * m_worldData.CellSize;
+                if (math.lengthsq(worldPosition) > m_worldData.WorldRadius * m_worldData.WorldRadius) continue;
+                Gizmos.DrawWireCube(worldPosition, Vector3.one * m_worldData.CellSize);
+            }
         }
 
         private void DrawBoid()
