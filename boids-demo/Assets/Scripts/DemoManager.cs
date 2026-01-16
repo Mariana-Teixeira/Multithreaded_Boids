@@ -377,33 +377,22 @@ namespace Demo.Boids
                 float a = 1;
                 float b = 2.0f * math.dot(rayDirection, origin);
                 float c = math.dot(origin, origin) - radius * radius;
-                SolveQuadratic(a, b, c, out float t0, out float t1);
+                SolveQuadratic(a, b, c, out float t);
 
-                return origin + rayDirection * t1;
+                return origin + rayDirection * t;
             }
             
-            private void SolveQuadratic(float a, float b, float c, out float t0, out float t1)
+            private void SolveQuadratic(float a, float b, float c, out float t)
             {
-                t0 = t1 = 0;
+                t = 0;
                 
                 float discriminant = b * b - 4 * a * c;
 
-                if (discriminant < 0) return;
+                float q = b > 0 ? 
+                    -0.5f * (b + Mathf.Sqrt(discriminant)) : 
+                    -0.5f * (b - Mathf.Sqrt(discriminant));
                 
-                if (discriminant == 0) 
-                {
-                    t0 = t1 = -0.5f * b / a;
-                }
-                else 
-                {
-                    float q = b > 0 ? 
-                        -0.5f * (b + Mathf.Sqrt(discriminant)) : 
-                        -0.5f * (b - Mathf.Sqrt(discriminant));
-                    t0 = q / a;
-                    t1 = c / q;
-                }
-
-                if (t0 > t1) (t0, t1) = (t1, t0);
+                t = c / q;
             }
 
             float3 GetPerpendicular(float3 collisionNormal, float3 forwardNormal)
