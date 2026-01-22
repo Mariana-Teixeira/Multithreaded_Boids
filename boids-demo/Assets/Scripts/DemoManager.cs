@@ -17,7 +17,6 @@ namespace Demo.Boids
         {
             public float WorldRadius;
             public float SpawnRadius;
-            public float CellSize;
             public int Count;
         }
         
@@ -53,12 +52,12 @@ namespace Demo.Boids
         
         [SerializeField]
         private GameObject m_prefab;
-
         [Space, SerializeField]
         private WorldData m_worldData;
         [Space, SerializeField]
         private BoidData m_boidData;
         
+        // Data is stored in NativeArrays to ensure cache-friendly linear memory access for Burst compilation.
         private TransformAccessArray m_transforms;
         private NativeArray<float3> m_positions;
         private NativeArray<quaternion> m_rotations;
@@ -66,8 +65,12 @@ namespace Demo.Boids
         private NativeArray<float3> m_steerings;
         private NativeParallelMultiHashMap<int, int> m_spatialHashMap;
         private NativeArray<float3> m_probes;
-
+        
         private JobHandle m_boidsHandle;
+
+        // Spatial Hash Grid cell size is assigned to the highest steering radius (in BoidsData) to ensure the boids
+        // query neighbours that are within their field of vision.
+        private float m_gridCellSize;
 
         private const int PROBES_PER_BOID = 5;
     
@@ -79,6 +82,12 @@ namespace Demo.Boids
             m_steerings = new NativeArray<float3>(m_worldData.Count, Allocator.Persistent);
             m_spatialHashMap = new NativeParallelMultiHashMap<int, int>(m_worldData.Count, Allocator.Persistent);
             m_probes = new NativeArray<float3>(m_worldData.Count * PROBES_PER_BOID, Allocator.Persistent);
+        }
+
+        private void OnValidate()
+        {
+            m_gridCellSize = math.max(m_boidData.SeparationRadius, m_boidData.CohesionRadius);
+            m_gridCellSize = math.max(m_gridCellSize, m_boidData.AlignmentRadius);
         }
 
         private void OnDestroy()
@@ -114,9 +123,6 @@ namespace Demo.Boids
             m_transforms = new TransformAccessArray(transforms);
         }
 
-        /// <summary>
-        /// Schedules the Unity Jobs responsible for updating the Spatial Hash Grid, Probes and Steering Behaviours.
-        /// </summary>
         private void Update()
         {
             m_boidsHandle.Complete();
@@ -128,19 +134,18 @@ namespace Demo.Boids
             m_debugData.Steering = m_steerings[index];
 #endif
             
-            // Update Boids position on the Spatial Hash Grid.
+            // Clear and rebuild the spatial hash grid to account for boids moving across boundaries.
             m_spatialHashMap.Clear();
             UpdateSpatialHashGridJob spatialHashGridJob = new UpdateSpatialHashGridJob
             {
                 Positions = m_positions,
                 SpatialHashMap = m_spatialHashMap.AsParallelWriter(),
                 WorldSize = m_worldData.WorldRadius,
-                CellSize = m_worldData.CellSize
+                CellSize = m_gridCellSize
             };
             JobHandle hashHandle = spatialHashGridJob.Schedule(m_worldData.Count, 64);
             
-            // Update Probe Position/Rotation for Boids.
-            // Probes are the Boids vision; they are used to check for collisions.
+            // Update probe position and rotation to match the boids position and rotation.
             UpdateProbesJob probesJob = new UpdateProbesJob
             {
                 Positions = m_positions,
@@ -162,7 +167,7 @@ namespace Demo.Boids
                 Steerings = m_steerings,
                 SpatialHashMap = m_spatialHashMap,
                 WorldSize = m_worldData.WorldRadius,
-                CellSize = m_worldData.CellSize,
+                CellSize = m_gridCellSize,
                 SeparationRadius = m_boidData.SeparationRadius,
                 SeparationThreshold = m_boidData.SeparationDot,
                 SeparationWeight = m_boidData.SeparationWeight,
@@ -204,7 +209,8 @@ namespace Demo.Boids
         }
         
         /// <summary>
-        /// Each Boid updates their index position in the spatial hash grid.
+        /// Using a <c>ParallelMultiHashMap</c> for a spatial hash grid allowed me to reduce the query to O(n).
+        /// Without the spatial hash grid the complexity would rise to O(n^2).
         /// </summary>
         [BurstCompile]
         private struct UpdateSpatialHashGridJob : IJobParallelFor
@@ -225,6 +231,7 @@ namespace Demo.Boids
         }
         
         /// <summary>
+        /// Probes are rays intended as a "vision cone" for each boid; they are needed to check for collisions. 
         /// Each boid has five associated probes: one probe follows the direction of the velocity, the remaining four
         /// probes are rotated upwards, downwards, leftwards and rightwards from that initial direction.
         /// </summary>
@@ -430,7 +437,6 @@ namespace Demo.Boids
 
 
             /// <param name="t">Distance between Ray Origin and Collision Point.</param>
-            /// <a href="https://www.scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/ray-sphere-intersection.html">Ray-Sphere Intersection</a>
             private void SolveQuadratic(float a, float b, float c, out float t)
             {
                 t = 0;
@@ -484,31 +490,43 @@ namespace Demo.Boids
             }
         }
         
-#region Math Helpers
+#region Safe Math
         private static int GetIndex(int3 gridPosition, int gridSize)
         {
             return gridPosition.x + gridPosition.y * gridSize + gridPosition.z * gridSize;
         }
 
-        /// <returns>Returns a zero when attempting to normalize a vector zero.</returns>
+        /// <summary>
+        /// Prevents NaN errors during normalization if the vector magnitude is zero.
+        /// </summary>
+        /// <returns>Returns a zero when error would be thrown.</returns>
         private static float3 SafeNormalize(float3 vector)
         {
             return math.lengthsq(vector) > math.EPSILON ? math.normalize(vector) : float3.zero;
         }
         
-        /// <returns>Returns a zero when attempting to get length of a vector zero.</returns>
+        /// <summary>
+        /// Prevents NaN errors when calculating length if the vector magnitude is zero.
+        /// </summary>
+        /// <returns>Returns a zero when error would be thrown.</returns>
         private static float SafeLength(float3 vector)
         {
             return math.lengthsq(vector) > math.EPSILON ? math.length(vector) : 0.0f;
         }
 
-        /// <returns>Returns a zero when attempting to divide by zero.</returns>
+        /// <summary>
+        /// Prevents NaN errors during division if the denominator is zero.
+        /// </summary>
+        /// <returns>Returns a zero when error would be thrown.</returns>
         private static float3 SafeDivide(float3 numerator, float denominator)
         {
             return math.abs(denominator) < math.EPSILON ? float3.zero : numerator / denominator;
         }
-
-        /// <returns>Returns quaternion identity when forward is zero vector.</returns>
+        
+        /// <summary>
+        /// Prevents NaN errors when calculating look rotation if forward magnitude is zero.
+        /// </summary>
+        /// <returns>Returns a identity when error would be thrown.</returns>
         private static quaternion SafeLookRotation(float3 forward, float3 up)
         {
             return math.lengthsq(forward) < math.EPSILON ? quaternion.identity : quaternion.LookRotation(forward, up);
@@ -583,15 +601,15 @@ namespace Demo.Boids
         private void DrawGrid()
         {
             Gizmos.color = Color.white;
-            int gridRadius = (int)(m_worldData.WorldRadius / m_worldData.CellSize);
+            int gridRadius = (int)(m_worldData.WorldRadius / m_gridCellSize);
             for (int x = -gridRadius; x < gridRadius; x++)
             for (int y = -gridRadius; y < gridRadius; y++)
             for (int z = -gridRadius; z < gridRadius; z++)
             {
                 float3 gridPosition = new float3(x, y, z);
-                float3 worldPosition = gridPosition * m_worldData.CellSize;
+                float3 worldPosition = gridPosition * m_gridCellSize;
                 if (math.lengthsq(worldPosition) > m_worldData.WorldRadius * m_worldData.WorldRadius) continue;
-                Gizmos.DrawWireCube(worldPosition, Vector3.one * m_worldData.CellSize);
+                Gizmos.DrawWireCube(worldPosition, Vector3.one * m_gridCellSize);
             }
         }
 

@@ -167,13 +167,12 @@ MonoBehaviour:
   m_worldData:
     WorldRadius: 100
     SpawnRadius: 50
-    CellSize: 10
     Count: 5000
   m_boidData:
     MinSpeed: 4
     MaxSpeed: 8
-    ProbeLength: 1.5
-    ProbeAngle: 90
+    ProbeLength: 2
+    ProbeAngle: 45
     SeparationRadius: 5
     SeparationDot: -0.707
     SeparationWeight: 12
@@ -184,11 +183,11 @@ MonoBehaviour:
     AlignmentDot: 0.7
     AlignmentWeight: 8
   m_debugData:
-    DrawGizmos: 0
+    DrawGizmos: 1
     GizmosType:
       WorldGizmo: 1
       GridGizmo: 0
-      BoidGizmo: 1
+      BoidGizmo: 0
     PointRadius: 0.2
     BoidIndex: 0
 --- !u!1 &1666568808
