@@ -29,7 +29,9 @@ namespace Demo.Boids
             public float MaxSpeed;
             
             [Header("Probes")]
-            public float ProbeLength;
+            [Tooltip("Probe Length is calculated by multiplying the velocity vector by this multiplier.")]
+            public float ProbeLengthMultiplier;
+            [Tooltip("Probe Angle defines the tilt rotation of the four directional probes.")]
             public float ProbeAngle;
 
             [Header("Steering")]
@@ -87,6 +89,8 @@ namespace Demo.Boids
 
         private void OnValidate()
         {
+            // By setting the grid cell size to the maximum steering radius, we ensure that all potential boid
+            // neighbours are located within the 27 adjacent cells.
             m_gridCellSize = math.max(m_boidData.SeparationRadius, m_boidData.CohesionRadius);
             m_gridCellSize = math.max(m_gridCellSize, m_boidData.AlignmentRadius);
         }
@@ -133,6 +137,11 @@ namespace Demo.Boids
             m_debugData.Position = m_transforms[index].position;
             m_debugData.Velocity = m_velocities[index];
             m_debugData.Steering = m_steerings[index];
+            m_debugData.Probe0 = m_probes[PROBES_PER_BOID * index];
+            m_debugData.Probe1 = m_probes[PROBES_PER_BOID * index + 1];
+            m_debugData.Probe2 = m_probes[PROBES_PER_BOID * index + 2];
+            m_debugData.Probe3 = m_probes[PROBES_PER_BOID * index + 3];
+            m_debugData.Probe4 = m_probes[PROBES_PER_BOID * index + 4];
 #endif
             // Rebuilds the spatial hash grid with the boids position.
             m_spatialHashMap.Clear();
@@ -151,7 +160,7 @@ namespace Demo.Boids
                 Positions = m_positions,
                 Velocities = m_velocities,
                 Probes = m_probes,
-                ProbeLength = m_boidData.ProbeLength,
+                ProbeLength = m_boidData.ProbeLengthMultiplier,
                 ProbeAngle = m_boidData.ProbeAngle
             };
             JobHandle probesHandle = probesJob.Schedule(m_worldData.Count, 64);
@@ -181,7 +190,8 @@ namespace Demo.Boids
             };
             JobHandle flockHandle = flockJob.Schedule(m_worldData.Count, 64, setupHandle);
             
-            // Increments the calculated value to the previous steering vector (steering += value).
+            // Containment is calculated after flocking to ensure we know where the boid is headed. This increments
+            // to the steering vector by the calculated value (steering += value).
             ContainmentSteeringJob containmentJob = new ContainmentSteeringJob
             {
                 Positions = m_positions,
@@ -450,6 +460,10 @@ namespace Demo.Boids
                 t = c / q;
             }
 
+            /// <summary>
+            /// Returning a perpendicular force allows for corrective lateral steering with minimal deceleration.
+            /// Other behaviours, like flee, would cause the boid to slow down and steer perpendicular to the boundary.
+            /// </summary>
             /// <returns>
             /// Returns the steering direction, perpendicular to the velocity, required to steer away from the boundary.
             /// </returns>
@@ -497,6 +511,7 @@ namespace Demo.Boids
         {
             return gridPosition.x + gridPosition.y * gridSize + gridPosition.z * gridSize;
         }
+        
         #region Debugging Methods
 #if UNITY_EDITOR
         /// <summary>
@@ -518,6 +533,17 @@ namespace Demo.Boids
             public float3 Velocity;
             [NonSerialized]
             public float3 Steering;
+
+            [NonSerialized]
+            public float3 Probe0;
+            [NonSerialized]
+            public float3 Probe1;
+            [NonSerialized]
+            public float3 Probe2;
+            [NonSerialized]
+            public float3 Probe3;
+            [NonSerialized]
+            public float3 Probe4;
         }
 
         /// <summary>
@@ -528,7 +554,9 @@ namespace Demo.Boids
         {
             public bool WorldGizmo;
             public bool GridGizmo;
-            public bool BoidGizmo;
+            public bool SteeringGizmos;
+            public bool VelocityGizmos;
+            public bool ProbesGizmos;
         }
 
         [Space]
@@ -539,20 +567,11 @@ namespace Demo.Boids
         {
             if (!m_debugData.DrawGizmos) return;
 
-            if (m_debugData.GizmosType.WorldGizmo)
-            {
-                DrawWorld();
-            }
-
-            if (m_debugData.GizmosType.GridGizmo)
-            {
-                DrawGrid();
-            }
-
-            if (m_debugData.GizmosType.BoidGizmo)
-            {
-                DrawBoid();
-            }
+            if (m_debugData.GizmosType.WorldGizmo) DrawWorld();
+            if (m_debugData.GizmosType.GridGizmo) DrawGrid();
+            if (m_debugData.GizmosType.SteeringGizmos) DrawSteering();
+            if (m_debugData.GizmosType.VelocityGizmos) DrawVelocity();
+            if (m_debugData.GizmosType.ProbesGizmos) DrawProbes();
         }
 
         private void DrawWorld()
@@ -577,15 +596,28 @@ namespace Demo.Boids
             }
         }
 
-        private void DrawBoid()
+        private void DrawSteering()
         {
             Gizmos.color = Color.red;
             Gizmos.DrawSphere(m_debugData.Position + m_debugData.Velocity + m_debugData.Steering, m_debugData.PointRadius);
             Gizmos.DrawLine(m_debugData.Position + m_debugData.Velocity, m_debugData.Position + m_debugData.Velocity + m_debugData.Steering);
-            
+        }
+
+        private void DrawVelocity()
+        {
             Gizmos.color = Color.blue;
             Gizmos.DrawSphere(m_debugData.Position + m_debugData.Velocity, m_debugData.PointRadius);
             Gizmos.DrawLine(m_debugData.Position, m_debugData.Position + m_debugData.Velocity);
+        }
+
+        private void DrawProbes()
+        {
+            Gizmos.color = Color.green;
+            Gizmos.DrawLine(m_debugData.Position, m_debugData.Probe0);
+            Gizmos.DrawLine(m_debugData.Position, m_debugData.Probe1);
+            Gizmos.DrawLine(m_debugData.Position, m_debugData.Probe2);
+            Gizmos.DrawLine(m_debugData.Position, m_debugData.Probe3);
+            Gizmos.DrawLine(m_debugData.Position, m_debugData.Probe4);
         }
 #endif
 #endregion
