@@ -183,7 +183,7 @@ MonoBehaviour:
     AlignmentDot: 0.7
     AlignmentWeight: 8
   m_debugData:
-    DrawGizmos: 1
+    DrawGizmos: 0
     GizmosType:
       WorldGizmo: 1
       GridGizmo: 0

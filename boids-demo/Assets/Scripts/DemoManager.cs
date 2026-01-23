@@ -1,4 +1,5 @@
 using System;
+using Demo.Utilities;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
@@ -57,7 +58,7 @@ namespace Demo.Boids
         [Space, SerializeField]
         private BoidData m_boidData;
         
-        // Data is stored in NativeArrays to ensure cache-friendly linear memory access for Burst compilation.
+        // Data is stored in NativeArrays to ensure linear memory access, minimizing cache misses and allowing for Burst compilation.
         private TransformAccessArray m_transforms;
         private NativeArray<float3> m_positions;
         private NativeArray<quaternion> m_rotations;
@@ -68,7 +69,7 @@ namespace Demo.Boids
         
         private JobHandle m_boidsHandle;
 
-        // Spatial Hash Grid cell size is assigned to the highest steering radius (in BoidsData) to ensure the boids
+        // Spatial Hash Grid cell size is assigned to the highest steering radius to ensure the boids
         // query neighbours that are within their field of vision.
         private float m_gridCellSize;
 
@@ -133,8 +134,7 @@ namespace Demo.Boids
             m_debugData.Velocity = m_velocities[index];
             m_debugData.Steering = m_steerings[index];
 #endif
-            
-            // Clear and rebuild the spatial hash grid to account for boids moving across boundaries.
+            // Rebuilds the spatial hash grid with the boids position.
             m_spatialHashMap.Clear();
             UpdateSpatialHashGridJob spatialHashGridJob = new UpdateSpatialHashGridJob
             {
@@ -145,7 +145,7 @@ namespace Demo.Boids
             };
             JobHandle hashHandle = spatialHashGridJob.Schedule(m_worldData.Count, 64);
             
-            // Update probe position and rotation to match the boids position and rotation.
+            // Updates position and rotation of probes based on boid position and velocity.
             UpdateProbesJob probesJob = new UpdateProbesJob
             {
                 Positions = m_positions,
@@ -158,8 +158,8 @@ namespace Demo.Boids
             
             JobHandle setupHandle = JobHandle.CombineDependencies(hashHandle, probesHandle);
             
-            // Updates the steering vector according to the separation, cohesion and alignment principles.
-            // Overrides the previous frames steering vector to the calculate value (steering = value).
+            // Overrides the steering vector to the calculate value (steering = value), because
+            // steering behaviours are only accumulative for one frame.
             FlockSteeringJob flockJob = new FlockSteeringJob
             {
                 Positions = m_positions,
@@ -181,7 +181,6 @@ namespace Demo.Boids
             };
             JobHandle flockHandle = flockJob.Schedule(m_worldData.Count, 64, setupHandle);
             
-            // Updates the steering vector according to the containment principle (similar to obstacle avoidance).
             // Increments the calculated value to the previous steering vector (steering += value).
             ContainmentSteeringJob containmentJob = new ContainmentSteeringJob
             {
@@ -194,8 +193,7 @@ namespace Demo.Boids
             };
             JobHandle containmentHandle = containmentJob.Schedule(m_worldData.Count, 64, flockHandle);
             
-            // Calculates velocity based on the previously calculated steering vector.
-            // Moves boids using the TransformAccessArray (position += velocity).
+            // Calculates velocity based on the previously calculated steering vector and update boids position.
             UpdateMovementJob movementJob = new UpdateMovementJob
             {
                 Positions = m_positions,
@@ -231,11 +229,11 @@ namespace Demo.Boids
         }
         
         /// <summary>
-        /// Probes are rays intended as a "vision cone" for each boid; they are needed to check for collisions. 
-        /// Each boid has five associated probes: one probe follows the direction of the velocity, the remaining four
-        /// probes are rotated upwards, downwards, leftwards and rightwards from that initial direction.
+        /// Probes are rays intended as a "vision cone" for each boid; they are needed to check for collisions.
+        /// These probes act similarly to the built-in Raycasts, but avoid the performance overhead of the
+        /// physics system.
         /// </summary>
-        /// <param name="ProbeAngle">The angle of rotation for the rotated probes.</param>
+        /// <param name="ProbeAngle">The angle of rotation for the tilted probes.</param>
         [BurstCompile]
         private struct UpdateProbesJob : IJobParallelFor
         {
@@ -254,17 +252,19 @@ namespace Demo.Boids
             public void Execute(int index)
             {
                 float3 originPosition = Positions[index];
-                float length = SafeLength(Velocities[index]) * ProbeLength;
-                float3 forward = SafeNormalize(Velocities[index]);
+                float length = CustomMath.Length(Velocities[index]) * ProbeLength;
+                float3 forward = CustomMath.Normalize(Velocities[index]);
                 float3 ray = forward * length;
 
                 float3 globalUp = math.up();
                 float3 cross = math.cross(globalUp, forward);
-                float3 right = SafeNormalize(cross);
+                float3 right = CustomMath.Normalize(cross);
                 float3 up = math.cross(forward, right);
                 
+                // Each boid has five probes: the first follows the direction of the velocity.
                 Probes[index * PROBES_PER_BOID] = originPosition + ray;
-
+                
+                // The remaining four are tilted upwards, downwards, leftwards and rightwards.
                 quaternion upTilt = quaternion.AxisAngle(right, ProbeAngle);
                 Probes[index * PROBES_PER_BOID + 1] = originPosition + math.mul(upTilt, ray);
 
@@ -319,8 +319,8 @@ namespace Demo.Boids
                 int cohesionCount = 0;
                 int alignmentCount = 0;
 
-                float3 velocityNormalized = SafeNormalize(Velocities[index]);
-                float3 division = SafeDivide(Positions[index], CellSize);
+                float3 velocityNormalized = CustomMath.Normalize(Velocities[index]);
+                float3 division = CustomMath.Divide(Positions[index], CellSize);
                 int3 gridPosition = (int3)math.floor(division);
 
                 for (int x = -1; x <= 1; x++)
@@ -341,12 +341,12 @@ namespace Demo.Boids
                         float3 vectorToNeighbour = Positions[other] - Positions[index];
                         float distanceSqToNeighbour = math.lengthsq(vectorToNeighbour);
                         
-                        float dot = math.dot(velocityNormalized, SafeNormalize(vectorToNeighbour));
+                        float dot = math.dot(velocityNormalized, CustomMath.Normalize(vectorToNeighbour));
                     
                         if (distanceSqToNeighbour < SeparationRadius * SeparationRadius && dot > SeparationThreshold)
                         {
                             float distanceToNeighbour = math.sqrt(distanceSqToNeighbour);
-                            separationForce += SafeDivide(-vectorToNeighbour, distanceToNeighbour);
+                            separationForce += CustomMath.Divide(-vectorToNeighbour, distanceToNeighbour);
                         }
                         
                         if (distanceSqToNeighbour < CohesionRadius * CohesionRadius && dot > CohesionThreshold)
@@ -377,7 +377,7 @@ namespace Demo.Boids
                     steeringVector += alignmentForce * AlignmentWeight;
                 }
 
-                Steerings[index] = SafeNormalize(steeringVector) * MaxSpeed;
+                Steerings[index] = CustomMath.Normalize(steeringVector) * MaxSpeed;
             }
         }
 
@@ -408,11 +408,11 @@ namespace Demo.Boids
                     float3 probe = Probes[index * PROBES_PER_BOID + i];
                     if (math.lengthsq(probe) < WorldRadius * WorldRadius) continue;
 
-                    float3 probeDirection = SafeNormalize(probe - Positions[index]);
+                    float3 probeDirection = CustomMath.Normalize(probe - Positions[index]);
                     float3 collisionPoint = GetCollisionPoint(Positions[index], probeDirection, WorldRadius);
 
-                    float3 collisionNormal = SafeNormalize(-collisionPoint);
-                    float3 velocityNormal = SafeNormalize(-Velocities[index]);
+                    float3 collisionNormal = CustomMath.Normalize(-collisionPoint);
+                    float3 velocityNormal = CustomMath.Normalize(-Velocities[index]);
                     float3 perpendicular = GetPerpendicular(collisionNormal, velocityNormal);
                 
                     Steerings[index] += perpendicular * MaxSpeed;
@@ -421,8 +421,8 @@ namespace Demo.Boids
             }
 
             /// <summary>
-            /// We use a simplified the Analytic Solution presented by Jean-Colas Prunier. This simplification outputs
-            /// the correct position of a collision only when the ray origin is contained within the collider radius.
+            /// We simplified the Analytic Solution presented by Jean-Colas Prunier. This simplification outputs
+            /// the correct position of a collision only when the ray origin is contained within the boundary radius.
             /// </summary>
             /// <a href="https://www.scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/ray-sphere-intersection.html">Ray-Sphere Intersection</a>
             private float3 GetCollisionPoint(float3 rayOrigin, float3 rayDirection, float colliderRadius)
@@ -450,16 +450,19 @@ namespace Demo.Boids
                 t = c / q;
             }
 
+            /// <returns>
+            /// Returns the steering direction, perpendicular to the velocity, required to steer away from the boundary.
+            /// </returns>
             float3 GetPerpendicular(float3 collisionNormal, float3 forwardNormal)
             {
                 float3 dotVector = forwardNormal * math.dot(collisionNormal, forwardNormal);
-                return SafeNormalize(collisionNormal - dotVector);
+                return CustomMath.Normalize(collisionNormal - dotVector);
             }
         }
 
         /// <summary>
-        /// Updates the velocity of each boid by their steering vector and applies it to position and rotation.
-        /// Boids use their transform component to translate and rotate.
+        /// Apply the steering vector to the boids velocity and clamp the velocity to the <c>BoidData.MaxSpeed</c> to
+        /// prevent infinite acceleration. Finally, update their rotation to "look at" the new velocity direction.
         /// </summary>
         [BurstCompile]
         private struct UpdateMovementJob : IJobParallelForTransform
@@ -478,62 +481,23 @@ namespace Demo.Boids
                 Velocities[index] += Steerings[index] * DeltaTime;
 
                 float velocitySq = math.lengthsq(Velocities[index]);
-                float3 forward = SafeNormalize(Velocities[index]);
+                float3 forward = CustomMath.Normalize(Velocities[index]);
                 if (velocitySq > MaxSpeed * MaxSpeed)
                     Velocities[index] = forward * MaxSpeed;
                 
                 Positions[index] += Velocities[index] * DeltaTime;
                 transform.position = Positions[index];
                 
-                Rotations[index] = SafeLookRotation(forward, math.up());
+                Rotations[index] = CustomMath.LookRotation(forward, math.up());
                 transform.rotation = Rotations[index];
             }
         }
         
-#region Safe Math
         private static int GetIndex(int3 gridPosition, int gridSize)
         {
             return gridPosition.x + gridPosition.y * gridSize + gridPosition.z * gridSize;
         }
-
-        /// <summary>
-        /// Prevents NaN errors during normalization if the vector magnitude is zero.
-        /// </summary>
-        /// <returns>Returns a zero when error would be thrown.</returns>
-        private static float3 SafeNormalize(float3 vector)
-        {
-            return math.lengthsq(vector) > math.EPSILON ? math.normalize(vector) : float3.zero;
-        }
-        
-        /// <summary>
-        /// Prevents NaN errors when calculating length if the vector magnitude is zero.
-        /// </summary>
-        /// <returns>Returns a zero when error would be thrown.</returns>
-        private static float SafeLength(float3 vector)
-        {
-            return math.lengthsq(vector) > math.EPSILON ? math.length(vector) : 0.0f;
-        }
-
-        /// <summary>
-        /// Prevents NaN errors during division if the denominator is zero.
-        /// </summary>
-        /// <returns>Returns a zero when error would be thrown.</returns>
-        private static float3 SafeDivide(float3 numerator, float denominator)
-        {
-            return math.abs(denominator) < math.EPSILON ? float3.zero : numerator / denominator;
-        }
-        
-        /// <summary>
-        /// Prevents NaN errors when calculating look rotation if forward magnitude is zero.
-        /// </summary>
-        /// <returns>Returns a identity when error would be thrown.</returns>
-        private static quaternion SafeLookRotation(float3 forward, float3 up)
-        {
-            return math.lengthsq(forward) < math.EPSILON ? quaternion.identity : quaternion.LookRotation(forward, up);
-        }
-#endregion
-
-#region Debugging Methods
+        #region Debugging Methods
 #if UNITY_EDITOR
         /// <summary>
         /// Struct containing all data necessary for the Gizmos.
