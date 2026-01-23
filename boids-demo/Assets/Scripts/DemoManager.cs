@@ -74,6 +74,7 @@ namespace Demo.Boids
         // Spatial Hash Grid cell size is assigned to the highest steering radius to ensure the boids
         // query neighbours that are within their field of vision.
         private float m_gridCellSize;
+        private int m_gridSize;
 
         private const int PROBES_PER_BOID = 5;
     
@@ -85,14 +86,6 @@ namespace Demo.Boids
             m_steerings = new NativeArray<float3>(m_worldData.Count, Allocator.Persistent);
             m_spatialHashMap = new NativeParallelMultiHashMap<int, int>(m_worldData.Count, Allocator.Persistent);
             m_probes = new NativeArray<float3>(m_worldData.Count * PROBES_PER_BOID, Allocator.Persistent);
-        }
-
-        private void OnValidate()
-        {
-            // By setting the grid cell size to the maximum steering radius, we ensure that all potential boid
-            // neighbours are located within the 27 adjacent cells.
-            m_gridCellSize = math.max(m_boidData.SeparationRadius, m_boidData.CohesionRadius);
-            m_gridCellSize = math.max(m_gridCellSize, m_boidData.AlignmentRadius);
         }
 
         private void OnDestroy()
@@ -111,6 +104,12 @@ namespace Demo.Boids
         private void Start()
         {
             InstantiateBoids();
+            SetGridSize();
+        }
+        
+        private void OnValidate()
+        {
+            SetGridSize();
         }
         
         private void InstantiateBoids()
@@ -126,6 +125,16 @@ namespace Demo.Boids
                 m_positions[index] = boid.transform.position;
             }
             m_transforms = new TransformAccessArray(transforms);
+        }
+        
+        private void SetGridSize()
+        {
+            // By setting the grid cell size to the maximum steering radius, we ensure that all potential boid
+            // neighbours are located within the 27 adjacent cells.
+            m_gridCellSize = math.max(m_boidData.SeparationRadius, m_boidData.CohesionRadius);
+            m_gridCellSize = math.max(m_gridCellSize, m_boidData.AlignmentRadius);
+
+            m_gridSize = (int)(m_worldData.WorldRadius / m_gridCellSize);
         }
 
         private void Update()
@@ -175,7 +184,7 @@ namespace Demo.Boids
                 Velocities = m_velocities,
                 Steerings = m_steerings,
                 SpatialHashMap = m_spatialHashMap,
-                WorldSize = m_worldData.WorldRadius,
+                GridSize = m_gridSize,
                 CellSize = m_gridCellSize,
                 SeparationRadius = m_boidData.SeparationRadius,
                 SeparationThreshold = m_boidData.SeparationDot,
@@ -243,7 +252,6 @@ namespace Demo.Boids
         /// These probes act similarly to the built-in Raycasts, but avoid the performance overhead of the
         /// physics system.
         /// </summary>
-        /// <param name="ProbeAngle">The angle of rotation for the tilted probes.</param>
         [BurstCompile]
         private struct UpdateProbesJob : IJobParallelFor
         {
@@ -288,7 +296,7 @@ namespace Demo.Boids
                 Probes[index * PROBES_PER_BOID + 4] = originPosition + math.mul(leftTilt, ray);
             }
         }
-
+        
         /// <summary>
         /// Follows a Flock Steering Behaviour by combining Separation, Cohesion and Alignment Behaviours.
         /// Uses the Spatial Hash Grid to get neighbouring boids of adjacent cells.
@@ -304,7 +312,7 @@ namespace Demo.Boids
             public NativeArray<float3> Steerings;
             [ReadOnly]
             public NativeParallelMultiHashMap<int, int> SpatialHashMap;
-            public float WorldSize;
+            public int GridSize;
             public float CellSize;
 
             public float SeparationRadius;
@@ -332,37 +340,37 @@ namespace Demo.Boids
                 float3 velocityNormalized = CustomMath.Normalize(Velocities[index]);
                 float3 division = CustomMath.Divide(Positions[index], CellSize);
                 int3 gridPosition = (int3)math.floor(division);
-
+                
                 for (int x = -1; x <= 1; x++)
                 for (int y = -1; y <= 1; y++)
                 for (int z = -1; z <= 1; z++)
                 {
                     int3 otherGridPosition = gridPosition + new int3(x, y, z);
-                    int gridSize = (int)(WorldSize / CellSize);
-                    int hash = GetIndex(otherGridPosition, gridSize);
+                    int hash = GetIndex(otherGridPosition, GridSize);
+
 
                     bool fetchValue = SpatialHashMap.TryGetFirstValue(hash, out var other, out var iterator);
-                    if (!fetchValue) continue;
-                    
+                    if (!fetchValue) return;
+
                     do
                     {
                         if (index == other) continue;
-                        
+
                         float3 vectorToNeighbour = Positions[other] - Positions[index];
                         float distanceSqToNeighbour = math.lengthsq(vectorToNeighbour);
-                        
+
                         float dot = math.dot(velocityNormalized, CustomMath.Normalize(vectorToNeighbour));
-                    
+
                         if (distanceSqToNeighbour < SeparationRadius * SeparationRadius && dot > SeparationThreshold)
                         {
                             float distanceToNeighbour = math.sqrt(distanceSqToNeighbour);
                             separationForce += CustomMath.Divide(-vectorToNeighbour, distanceToNeighbour);
                         }
-                        
+
                         if (distanceSqToNeighbour < CohesionRadius * CohesionRadius && dot > CohesionThreshold)
                         {
                             cohesionForce += Positions[other];
-                            cohesionCount++;   
+                            cohesionCount++;
                         }
 
                         if (distanceSqToNeighbour < AlignmentRadius * AlignmentRadius && dot > AlignmentThreshold)
@@ -372,7 +380,7 @@ namespace Demo.Boids
                         }
                     } while (SpatialHashMap.TryGetNextValue(out other, ref iterator));
                 }
-            
+
                 steeringVector += separationForce * SeparationWeight;
 
                 if (cohesionCount > 0)
