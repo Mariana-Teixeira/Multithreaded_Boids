@@ -522,8 +522,10 @@ namespace Demo.Boids
         {
             public bool DrawGizmos;
             public GizmosType GizmosType;
-            public float PointRadius;
             
+            [Space]
+            public float PointRadius;
+
             [Space]
             public int BoidIndex;
 
@@ -533,7 +535,6 @@ namespace Demo.Boids
             public float3 Velocity;
             [NonSerialized]
             public float3 Steering;
-
             [NonSerialized]
             public float3 Probe0;
             [NonSerialized]
@@ -553,7 +554,6 @@ namespace Demo.Boids
         public struct GizmosType
         {
             public bool WorldGizmo;
-            public bool GridGizmo;
             public bool SteeringGizmos;
             public bool VelocityGizmos;
             public bool ProbesGizmos;
@@ -568,7 +568,6 @@ namespace Demo.Boids
             if (!m_debugData.DrawGizmos) return;
 
             if (m_debugData.GizmosType.WorldGizmo) DrawWorld();
-            if (m_debugData.GizmosType.GridGizmo) DrawGrid();
             if (m_debugData.GizmosType.SteeringGizmos) DrawSteering();
             if (m_debugData.GizmosType.VelocityGizmos) DrawVelocity();
             if (m_debugData.GizmosType.ProbesGizmos) DrawProbes();
@@ -579,21 +578,6 @@ namespace Demo.Boids
             Gizmos.color = Color.black;
             Gizmos.DrawWireSphere(Vector3.zero, m_worldData.WorldRadius);
             Gizmos.DrawWireSphere(Vector3.zero, m_worldData.SpawnRadius);
-        }
-
-        private void DrawGrid()
-        {
-            Gizmos.color = Color.white;
-            int gridRadius = (int)(m_worldData.WorldRadius / m_gridCellSize);
-            for (int x = -gridRadius; x < gridRadius; x++)
-            for (int y = -gridRadius; y < gridRadius; y++)
-            for (int z = -gridRadius; z < gridRadius; z++)
-            {
-                float3 gridPosition = new float3(x, y, z);
-                float3 worldPosition = gridPosition * m_gridCellSize;
-                if (math.lengthsq(worldPosition) > m_worldData.WorldRadius * m_worldData.WorldRadius) continue;
-                Gizmos.DrawWireCube(worldPosition, Vector3.one * m_gridCellSize);
-            }
         }
 
         private void DrawSteering()

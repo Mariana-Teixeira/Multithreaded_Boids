@@ -171,7 +171,7 @@ MonoBehaviour:
   m_boidData:
     MinSpeed: 4
     MaxSpeed: 8
-    ProbeLength: 2
+    ProbeLengthMultiplier: 2
     ProbeAngle: 45
     SeparationRadius: 5
     SeparationDot: -0.707
@@ -187,7 +187,9 @@ MonoBehaviour:
     GizmosType:
       WorldGizmo: 1
       GridGizmo: 0
-      BoidGizmo: 0
+      SteeringGizmos: 0
+      VelocityGizmos: 0
+      ProbesGizmos: 0
     PointRadius: 0.2
     BoidIndex: 0
 --- !u!1 &1666568808
