@@ -117,12 +117,19 @@ namespace Demo.Boids
             Transform[] transforms = new Transform[m_worldData.Count];
             for (int index = 0; index < m_worldData.Count; index++)
             {
-                Vector3 randomPosition = Random.insideUnitSphere * m_worldData.SpawnRadius;
-                GameObject boid = Instantiate(m_prefab, randomPosition, Quaternion.identity);
+                float3 randomPosition = Random.insideUnitSphere * m_worldData.SpawnRadius;
+                quaternion randomRotation = Random.rotationUniform;
+                
+                GameObject boid = Instantiate(m_prefab, randomPosition, randomRotation);
                 boid.name = $"Boids_{index}";
+                
+                float speed = Random.Range(m_boidData.MinSpeed, m_boidData.MaxSpeed);
+                float3 randomVelocity = boid.transform.forward * speed;
 
                 transforms[index] = boid.transform;
-                m_positions[index] = boid.transform.position;
+                m_positions[index] = randomPosition;
+                m_rotations[index] = randomRotation;
+                m_velocities[index] = randomVelocity;
             }
             m_transforms = new TransformAccessArray(transforms);
         }
@@ -347,7 +354,6 @@ namespace Demo.Boids
                 {
                     int3 otherGridPosition = gridPosition + new int3(x, y, z);
                     int hash = GetIndex(otherGridPosition, GridSize);
-
 
                     bool fetchValue = SpatialHashMap.TryGetFirstValue(hash, out var other, out var iterator);
                     if (!fetchValue) return;
