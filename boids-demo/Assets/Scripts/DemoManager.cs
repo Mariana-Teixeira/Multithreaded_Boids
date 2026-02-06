@@ -1,16 +1,9 @@
 using System;
-using Demo.Utilities;
-using Unity.Collections;
-using Unity.Jobs;
-using Unity.Mathematics;
 using UnityEngine;
-using Unity.Burst;
-using UnityEngine.Jobs;
 using Random = UnityEngine.Random;
 
 namespace Demo.Boids
 {
-    [BurstCompile]
     public class DemoManager : MonoBehaviour
     {
         [Serializable]
@@ -29,9 +22,7 @@ namespace Demo.Boids
             public float MaxSpeed;
             
             [Header("Probes")]
-            [Tooltip("Probe Length is calculated by multiplying the velocity vector by this multiplier.")]
             public float ProbeLengthMultiplier;
-            [Tooltip("Probe Angle defines the tilt rotation of the four directional probes.")]
             public float ProbeAngle;
 
             [Header("Steering")]
@@ -60,96 +51,53 @@ namespace Demo.Boids
         [Space, SerializeField]
         private BoidData m_boidData;
         
-        // Data is stored in NativeArrays to ensure linear memory access, minimizing cache misses and allowing for Burst compilation.
-        private TransformAccessArray m_transforms;
-        private NativeArray<float3> m_positions;
-        private NativeArray<quaternion> m_rotations;
-        private NativeArray<float3> m_velocities;
-        private NativeArray<float3> m_steerings;
-        private NativeParallelMultiHashMap<int, int> m_spatialHashMap;
-        private NativeArray<float3> m_probes;
+        private Transform[] m_transforms;
+        private Vector3[] m_positions;
+        private Quaternion[] m_rotations;
+        private Vector3[] m_velocities;
+        private Vector3[] m_steerings;
+        private Vector3[] m_probes;
         
-        private JobHandle m_boidsHandle;
-
-        // Spatial Hash Grid cell size is assigned to the highest steering radius to ensure the boids
-        // query neighbours that are within their field of vision.
-        private float m_gridCellSize;
-        private int m_gridSize;
-
         private const int PROBES_PER_BOID = 5;
     
         private void Awake()
         {
-            m_positions = new NativeArray<float3>(m_worldData.Count, Allocator.Persistent);
-            m_rotations = new NativeArray<quaternion>(m_worldData.Count, Allocator.Persistent);
-            m_velocities = new NativeArray<float3>(m_worldData.Count, Allocator.Persistent);
-            m_steerings = new NativeArray<float3>(m_worldData.Count, Allocator.Persistent);
-            m_spatialHashMap = new NativeParallelMultiHashMap<int, int>(m_worldData.Count, Allocator.Persistent);
-            m_probes = new NativeArray<float3>(m_worldData.Count * PROBES_PER_BOID, Allocator.Persistent);
-        }
-
-        private void OnDestroy()
-        {
-            m_boidsHandle.Complete();
-            
-            m_transforms.Dispose();
-            m_positions.Dispose();
-            m_rotations.Dispose();
-            m_velocities.Dispose();
-            m_steerings.Dispose();
-            m_spatialHashMap.Dispose();
-            m_probes.Dispose(); 
+            m_transforms = new Transform[m_worldData.Count];
+            m_positions = new Vector3[m_worldData.Count];
+            m_rotations = new Quaternion[m_worldData.Count];
+            m_velocities = new Vector3[m_worldData.Count];
+            m_steerings = new Vector3[m_worldData.Count];
+            m_probes = new Vector3[m_worldData.Count * PROBES_PER_BOID];
         }
 
         private void Start()
         {
             InstantiateBoids();
-            SetGridSize();
-
             Cursor.lockState = CursorLockMode.Locked;
-        }
-        
-        private void OnValidate()
-        {
-            SetGridSize();
         }
         
         private void InstantiateBoids()
         {
-            Transform[] transforms = new Transform[m_worldData.Count];
             for (int index = 0; index < m_worldData.Count; index++)
             {
-                float3 randomPosition = Random.insideUnitSphere * m_worldData.SpawnRadius;
-                quaternion randomRotation = Random.rotationUniform;
+                Vector3 randomPosition = Random.insideUnitSphere * m_worldData.SpawnRadius;
+                Quaternion randomRotation = Random.rotationUniform;
                 
                 GameObject boid = Instantiate(m_prefab, randomPosition, randomRotation);
                 boid.name = $"Boids_{index}";
                 
                 float speed = Random.Range(m_boidData.MinSpeed, m_boidData.MaxSpeed);
-                float3 randomVelocity = boid.transform.forward * speed;
+                Vector3 randomVelocity = boid.transform.forward * speed;
 
-                transforms[index] = boid.transform;
+                m_transforms[index] = boid.transform;
                 m_positions[index] = randomPosition;
                 m_rotations[index] = randomRotation;
                 m_velocities[index] = randomVelocity;
             }
-            m_transforms = new TransformAccessArray(transforms);
-        }
-        
-        private void SetGridSize()
-        {
-            // By setting the grid cell size to the maximum steering radius, we ensure that all potential boid
-            // neighbours are located within the 27 adjacent cells.
-            m_gridCellSize = math.max(m_boidData.SeparationRadius, m_boidData.CohesionRadius);
-            m_gridCellSize = math.max(m_gridCellSize, m_boidData.AlignmentRadius);
-            
-            m_gridSize = (int)(m_worldData.WorldRadius / m_gridCellSize);
         }
 
         private void Update()
         {
-            m_boidsHandle.Complete();
-            
 #if UNITY_EDITOR
             int index = m_debugData.BoidIndex;
             m_debugData.Position = m_transforms[index].position;
@@ -161,302 +109,127 @@ namespace Demo.Boids
             m_debugData.Probe3 = m_probes[PROBES_PER_BOID * index + 3];
             m_debugData.Probe4 = m_probes[PROBES_PER_BOID * index + 4];
 #endif
-            // Rebuilds the spatial hash grid with the boids position.
-            m_spatialHashMap.Clear();
-            UpdateSpatialHashGridJob spatialHashGridJob = new UpdateSpatialHashGridJob
+
+            for (int i = 0; i < m_worldData.Count; i++)
             {
-                Positions = m_positions,
-                SpatialHashMap = m_spatialHashMap.AsParallelWriter(),
-                GridSize = m_gridSize,
-                CellSize = m_gridCellSize
-            };
-            JobHandle hashHandle = spatialHashGridJob.Schedule(m_worldData.Count, 64);
-            
-            // Updates position and rotation of probes based on boid position and velocity.
-            UpdateProbesJob probesJob = new UpdateProbesJob
-            {
-                Positions = m_positions,
-                Velocities = m_velocities,
-                Probes = m_probes,
-                ProbeLength = m_boidData.ProbeLengthMultiplier,
-                ProbeAngle = m_boidData.ProbeAngle
-            };
-            JobHandle probesHandle = probesJob.Schedule(m_worldData.Count, 64);
-            
-            JobHandle setupHandle = JobHandle.CombineDependencies(hashHandle, probesHandle);
-            
-            // Overrides the steering vector to the calculate value (steering = value), because
-            // steering behaviours are only accumulative for one frame.
-            FlockSteeringJob flockJob = new FlockSteeringJob
-            {
-                Positions = m_positions,
-                Velocities = m_velocities,
-                Steerings = m_steerings,
-                SpatialHashMap = m_spatialHashMap,
-                GridSize = m_gridSize,
-                CellSize = m_gridCellSize,
-                SeparationRadius = m_boidData.SeparationRadius,
-                SeparationThreshold = m_boidData.SeparationDot,
-                SeparationWeight = m_boidData.SeparationWeight,
-                CohesionRadius = m_boidData.CohesionRadius,
-                CohesionThreshold = m_boidData.CohesionDot,
-                CohesionWeight = m_boidData.CohesionWeight,
-                AlignmentRadius = m_boidData.AlignmentRadius,
-                AlignmentThreshold = m_boidData.AlignmentDot,
-                AlignmentWeight = m_boidData.AlignmentWeight,
-                MaxSpeed = m_boidData.MaxSpeed
-            };
-            JobHandle flockHandle = flockJob.Schedule(m_worldData.Count, 64, setupHandle);
-            
-            // Containment is calculated after flocking to ensure we know where the boid is headed. This increments
-            // to the steering vector by the calculated value (steering += value).
-            ContainmentSteeringJob containmentJob = new ContainmentSteeringJob
-            {
-                Positions = m_positions,
-                Velocities = m_velocities,
-                Steerings = m_steerings,
-                Probes = m_probes,
-                WorldRadius = m_worldData.WorldRadius,
-                MaxSpeed = m_boidData.MaxSpeed
-            };
-            JobHandle containmentHandle = containmentJob.Schedule(m_worldData.Count, 64, flockHandle);
-            
-            // Calculates velocity based on the previously calculated steering vector and update boids position.
-            UpdateMovementJob movementJob = new UpdateMovementJob
-            {
-                Positions = m_positions,
-                Rotations = m_rotations,
-                Velocities = m_velocities,
-                Steerings = m_steerings,
-                MaxSpeed = m_boidData.MaxSpeed,
-                DeltaTime = Time.deltaTime
-            };
-            m_boidsHandle = movementJob.Schedule(m_transforms, containmentHandle);
-        }
-        
-        /// <summary>
-        /// Using a <c>ParallelMultiHashMap</c> for a spatial hash grid allowed me to reduce the query to O(n).
-        /// Without the spatial hash grid the complexity would rise to O(n^2).
-        /// </summary>
-        [BurstCompile]
-        private struct UpdateSpatialHashGridJob : IJobParallelFor
-        {
-            [ReadOnly]
-            public NativeArray<float3> Positions;
-            public NativeParallelMultiHashMap<int, int>.ParallelWriter SpatialHashMap;
-            public int GridSize;
-            public float CellSize;
-            
-            public void Execute(int index)
-            {
-                int3 gridPosition = (int3)math.floor(Positions[index] / CellSize);
-                int key = GetIndex(gridPosition, GridSize);
-                SpatialHashMap.Add(key, index);
+                UpdateProbes(i, m_boidData);
+                UpdateFlockSteering(i, m_worldData, m_boidData);
+                UpdateContainmentSteering(i, m_worldData, m_boidData);
+                UpdateMovement(i, m_boidData);
             }
         }
         
-        /// <summary>
-        /// Probes are rays intended as a "vision cone" for each boid; they are needed to check for collisions.
-        /// These probes act similarly to the built-in Raycasts, but avoid the performance overhead of the
-        /// physics system.
-        /// </summary>
-        [BurstCompile]
-        private struct UpdateProbesJob : IJobParallelFor
+        private void UpdateProbes(int index, BoidData data)
         {
-            [ReadOnly] public NativeArray<float3> Positions;
-            [ReadOnly] public NativeArray<float3> Velocities;
+            Vector3 originPosition = m_positions[index];
+            float length = m_velocities[index].magnitude * data.ProbeLengthMultiplier;
+            Vector3 forward = m_velocities[index].normalized;
+            Vector3 ray = forward * length;
+
+            Vector3 globalUp = Vector3.up;
+            Vector3 cross = Vector3.Cross(globalUp, forward);
+            Vector3 right = cross.normalized;
+            Vector3 up = Vector3.Cross(forward, right);
             
-            [NativeDisableParallelForRestriction]
-            public NativeArray<float3> Probes;
-            public float ProbeLength;
-            public float ProbeAngle;
+            m_probes[index * PROBES_PER_BOID] = originPosition + ray;
             
-            // Because each boid has five probes, the probes array length is 'WorldData.Count * PROBES_PER_BOID'.
-            // We use 'PROBES_PER_BOID * index + n' where n = { 0..4 } to access the five probes associated with the boid index.
-            public void Execute(int index)
-            {
-                float3 originPosition = Positions[index];
-                float length = CustomMath.Length(Velocities[index]) * ProbeLength;
-                float3 forward = CustomMath.Normalize(Velocities[index]);
-                float3 ray = forward * length;
+            Quaternion upTilt = Quaternion.AngleAxis(data.ProbeAngle, right);
+            m_probes[index * PROBES_PER_BOID + 1] = originPosition + upTilt * ray;
 
-                float3 globalUp = math.up();
-                float3 cross = math.cross(globalUp, forward);
-                float3 right = CustomMath.Normalize(cross);
-                float3 up = math.cross(forward, right);
-                
-                // Each boid has five probes: the first follows the direction of the velocity.
-                Probes[index * PROBES_PER_BOID] = originPosition + ray;
-                
-                // The remaining four are tilted upwards, downwards, leftwards and rightwards.
-                quaternion upTilt = quaternion.AxisAngle(right, ProbeAngle);
-                Probes[index * PROBES_PER_BOID + 1] = originPosition + math.mul(upTilt, ray);
+            Quaternion downTilt = Quaternion.AngleAxis(-data.ProbeAngle, right);
+            m_probes[index * PROBES_PER_BOID + 2] = originPosition + downTilt * ray;
 
-                quaternion downTilt = quaternion.AxisAngle(right, -ProbeAngle);
-                Probes[index * PROBES_PER_BOID + 2] = originPosition + math.mul(downTilt, ray);
+            Quaternion rightTilt = Quaternion.AngleAxis(data.ProbeAngle, up);
+            m_probes[index * PROBES_PER_BOID + 3] = originPosition + rightTilt * ray;
 
-                quaternion rightTilt = quaternion.AxisAngle(up, ProbeAngle);
-                Probes[index * PROBES_PER_BOID + 3] = originPosition + math.mul(rightTilt, ray);
-
-                quaternion leftTilt = quaternion.AxisAngle(up, -ProbeAngle);
-                Probes[index * PROBES_PER_BOID + 4] = originPosition + math.mul(leftTilt, ray);
-            }
-        }
-        
-        /// <summary>
-        /// Follows a Flock Steering Behaviour by combining Separation, Cohesion and Alignment Behaviours.
-        /// Uses the Spatial Hash Grid to get neighbouring boids of adjacent cells.
-        /// </summary>
-        /// <a href="https://www.red3d.com/cwr/steer/gdc99/">Steering Behaviors For Autonomous Characters</a>
-        [BurstCompile]
-        private struct FlockSteeringJob : IJobParallelFor
-        {
-            [ReadOnly] public NativeArray<float3> Positions;
-            [ReadOnly] public NativeArray<float3> Velocities;
-            [ReadOnly] public NativeParallelMultiHashMap<int, int> SpatialHashMap;
-            
-            public NativeArray<float3> Steerings;
-            public int GridSize;
-            public float CellSize;
-
-            public float SeparationRadius;
-            public float SeparationThreshold;
-            public float SeparationWeight;
-            public float CohesionRadius;
-            public float CohesionThreshold;
-            public float CohesionWeight;
-            public float AlignmentRadius;
-            public float AlignmentThreshold;
-            public float AlignmentWeight;
-
-            public float MaxSpeed;
-            
-            public void Execute(int index)
-            {
-                float3 steeringVector = new float3();
-                float3 separationForce = new float3();
-                float3 cohesionForce = new float3();
-                float3 alignmentForce = new float3();
-                
-                int cohesionCount = 0;
-                int alignmentCount = 0;
-
-                float3 velocityNormalized = CustomMath.Normalize(Velocities[index]);
-                float3 division = CustomMath.Divide(Positions[index], CellSize);
-                int3 gridPosition = (int3)math.floor(division);
-                
-                for (int x = -1; x <= 1; x++)
-                for (int y = -1; y <= 1; y++)
-                for (int z = -1; z <= 1; z++)
-                {
-                    int3 otherGridPosition = gridPosition + new int3(x, y, z);
-                    int hash = GetIndex(otherGridPosition, GridSize);
-
-                    bool fetchValue = SpatialHashMap.TryGetFirstValue(hash, out var other, out var iterator);
-                    if (!fetchValue) continue;
-
-                    do
-                    {
-                        if (index == other) continue;
-
-                        float3 vectorToNeighbour = Positions[other] - Positions[index];
-                        float distanceSqToNeighbour = math.lengthsq(vectorToNeighbour);
-
-                        float dot = math.dot(velocityNormalized, CustomMath.Normalize(vectorToNeighbour));
-
-                        if (distanceSqToNeighbour < SeparationRadius * SeparationRadius && dot > SeparationThreshold)
-                        {
-                            float distanceToNeighbour = math.sqrt(distanceSqToNeighbour);
-                            separationForce += CustomMath.Divide(-vectorToNeighbour, distanceToNeighbour);
-                        }
-
-                        if (distanceSqToNeighbour < CohesionRadius * CohesionRadius && dot > CohesionThreshold)
-                        {
-                            cohesionForce += Positions[other];
-                            cohesionCount++;
-                        }
-
-                        if (distanceSqToNeighbour < AlignmentRadius * AlignmentRadius && dot > AlignmentThreshold)
-                        {
-                            alignmentForce += Velocities[other];
-                            alignmentCount++;
-                        }
-                    } while (SpatialHashMap.TryGetNextValue(out other, ref iterator));
-                }
-
-                steeringVector += separationForce * SeparationWeight;
-
-                if (cohesionCount > 0)
-                {
-                    cohesionForce = cohesionForce / cohesionCount - Positions[index];
-                    steeringVector += cohesionForce * CohesionWeight;
-                }
-
-                if (alignmentCount > 0)
-                {
-                    alignmentForce = alignmentForce / alignmentCount;
-                    steeringVector += alignmentForce * AlignmentWeight;
-                }
-
-                Steerings[index] = CustomMath.Normalize(steeringVector) * MaxSpeed;
-            }
+            Quaternion leftTilt = Quaternion.AngleAxis(-data.ProbeAngle, up);
+            m_probes[index * PROBES_PER_BOID + 4] = originPosition + leftTilt * ray;
         }
 
-        /// <summary>
-        /// We limit the boids movement to the <c>WorldData.Radius</c> by using object avoidance steering behaviour.
-        /// Since the boids are contained inside a sphere, we use Ray-Sphere Intersection and Probes to calculate when
-        /// and how a boid needs to redirect their steering.
-        /// </summary>
-        /// <a href="https://www.red3d.com/cwr/steer/gdc99/">Steering Behaviors For Autonomous Characters</a>
-        [BurstCompile]
-        private struct ContainmentSteeringJob : IJobParallelFor
+        private void UpdateFlockSteering(int index, WorldData worldData, BoidData boidData)
         {
-            [ReadOnly] public NativeArray<float3> Positions;
-            [ReadOnly] public NativeArray<float3> Velocities;
-            [ReadOnly] public NativeArray<float3> Probes;
+            Vector3 steeringVector = new Vector3();
+            Vector3 separationForce = new Vector3();
+            Vector3 cohesionForce = new Vector3();
+            Vector3 alignmentForce = new Vector3();
             
-            public NativeArray<float3> Steerings;
+            int cohesionCount = 0;
+            int alignmentCount = 0;
 
-            public float WorldRadius;
-            public float MaxSpeed;
-            
-            public void Execute(int index)
+            for (int other = 0; other < worldData.Count; other++)
             {
-                for (int i = 0; i < PROBES_PER_BOID; i++)
+                if (index == other) continue;
+
+                Vector3 vectorToNeighbour = m_positions[other] - m_positions[index];
+                float distanceSqToNeighbour = vectorToNeighbour.sqrMagnitude;
+
+                float dot = Vector3.Dot(m_velocities[index].normalized, vectorToNeighbour.normalized);
+
+                if (distanceSqToNeighbour < boidData.SeparationRadius * boidData.SeparationRadius && dot > boidData.SeparationDot)
                 {
-                    float3 probe = Probes[index * PROBES_PER_BOID + i];
-                    if (math.lengthsq(probe) < WorldRadius * WorldRadius) continue;
+                    float distanceToNeighbour = Mathf.Sqrt(distanceSqToNeighbour);
+                    separationForce += -vectorToNeighbour / distanceToNeighbour;
+                }
 
-                    float3 probeDirection = CustomMath.Normalize(probe - Positions[index]);
-                    float3 collisionPoint = GetCollisionPoint(Positions[index], probeDirection, WorldRadius);
+                if (distanceSqToNeighbour < boidData.CohesionRadius * boidData.CohesionRadius && dot > boidData.CohesionDot)
+                {
+                    cohesionForce += m_positions[other];
+                    cohesionCount++;
+                }
 
-                    float3 collisionNormal = CustomMath.Normalize(-collisionPoint);
-                    float3 velocityNormal = CustomMath.Normalize(-Velocities[index]);
-                    float3 perpendicular = GetPerpendicular(collisionNormal, velocityNormal);
-                
-                    Steerings[index] += perpendicular * MaxSpeed;
-                    return;
+                if (distanceSqToNeighbour < boidData.AlignmentRadius * boidData.AlignmentRadius && dot > boidData.AlignmentDot)
+                {
+                    alignmentForce += m_velocities[other];
+                    alignmentCount++;
                 }
             }
 
-            /// <summary>
-            /// We simplified the Analytic Solution presented by Jean-Colas Prunier. This simplification outputs
-            /// the correct position of a collision only when the ray origin is contained within the boundary radius.
-            /// </summary>
-            /// <a href="https://www.scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/ray-sphere-intersection.html">Ray-Sphere Intersection</a>
-            private float3 GetCollisionPoint(float3 rayOrigin, float3 rayDirection, float colliderRadius)
+            steeringVector += separationForce * boidData.SeparationWeight;
+
+            if (cohesionCount > 0)
+            {
+                cohesionForce = cohesionForce / cohesionCount - m_positions[index];
+                steeringVector += cohesionForce * boidData.CohesionWeight;
+            }
+
+            if (alignmentCount > 0)
+            {
+                alignmentForce = alignmentForce / alignmentCount;
+                steeringVector += alignmentForce * boidData.AlignmentWeight;
+            }
+
+            m_steerings[index] = steeringVector.normalized * boidData.MaxSpeed;
+        }
+
+        private void UpdateContainmentSteering(int index, WorldData worldData, BoidData boidData)
+        {
+            for (int i = 0; i < PROBES_PER_BOID; i++)
+            {
+                Vector3 probe = m_probes[index * PROBES_PER_BOID + i];
+                if (probe.sqrMagnitude < worldData.WorldRadius * worldData.WorldRadius) continue;
+
+                Vector3 probeDirection = (probe - m_positions[index]).normalized;
+                Vector3 collisionPoint = GetCollisionPoint(m_positions[index], probeDirection, worldData.WorldRadius);
+
+                Vector3 collisionNormal = -collisionPoint.normalized;
+                Vector3 velocityNormal = -m_velocities[index].normalized;
+                Vector3 perpendicular = GetPerpendicular(collisionNormal, velocityNormal);
+            
+                m_steerings[index] += perpendicular * boidData.MaxSpeed;
+                return;
+            }
+
+            Vector3 GetCollisionPoint(Vector3 rayOrigin, Vector3 rayDirection, float colliderRadius)
             {
                 float a = 1;
-                float b = 2.0f * math.dot(rayDirection, rayOrigin);
-                float c = math.dot(rayOrigin, rayOrigin) - colliderRadius * colliderRadius;
+                float b = 2.0f * Vector3.Dot(rayDirection, rayOrigin);
+                float c = Vector3.Dot(rayOrigin, rayOrigin) - colliderRadius * colliderRadius;
                 float t = SolveQuadratic(a, b, c);
 
                 return rayOrigin + rayDirection * t;
             }
 
-
-            /// <param name="t">Distance between Ray Origin and Collision Point.</param>
-            private float SolveQuadratic(float a, float b, float c)
+            float SolveQuadratic(float a, float b, float c)
             {
                 float discriminant = b * b - 4 * a * c;
 
@@ -465,58 +238,29 @@ namespace Demo.Boids
                     -0.5f * (b - Mathf.Sqrt(discriminant));
                 
                 return c / q;
-            }
-
-            /// <summary>
-            /// Returning a perpendicular force allows for corrective lateral steering with minimal deceleration.
-            /// Other behaviours, like flee, would cause the boid to slow down and steer perpendicular to the boundary.
-            /// </summary>
-            /// <returns>
-            /// Returns the steering direction, perpendicular to the velocity, required to steer away from the boundary.
-            /// </returns>
-            float3 GetPerpendicular(float3 collisionNormal, float3 forwardNormal)
-            {
-                float3 dotVector = forwardNormal * math.dot(collisionNormal, forwardNormal);
-                return CustomMath.Normalize(collisionNormal - dotVector);
-            }
-        }
-
-        /// <summary>
-        /// Apply the steering vector to the boids velocity and clamp the velocity to the <c>BoidData.MaxSpeed</c> to
-        /// prevent infinite acceleration. Finally, update their rotation to "look at" the new velocity direction.
-        /// </summary>
-        [BurstCompile]
-        private struct UpdateMovementJob : IJobParallelForTransform
-        {
-            [ReadOnly] public NativeArray<float3> Steerings;
-
-            public NativeArray<float3> Positions;
-            public NativeArray<quaternion> Rotations;
-            public NativeArray<float3> Velocities;
-
-            public float MaxSpeed;
-            public float DeltaTime;
+            } 
             
-            public void Execute(int index, TransformAccess transform)
+            Vector3 GetPerpendicular(Vector3 collisionNormal, Vector3 forwardNormal)
             {
-                Velocities[index] += Steerings[index] * DeltaTime;
-
-                float velocitySq = math.lengthsq(Velocities[index]);
-                float3 forward = CustomMath.Normalize(Velocities[index]);
-                if (velocitySq > MaxSpeed * MaxSpeed)
-                    Velocities[index] = forward * MaxSpeed;
-                
-                Positions[index] += Velocities[index] * DeltaTime;
-                transform.position = Positions[index];
-                
-                Rotations[index] = CustomMath.LookRotation(forward, math.up());
-                transform.rotation = Rotations[index];
+                Vector3 dotVector = forwardNormal * Vector3.Dot(collisionNormal, forwardNormal);
+                return (collisionNormal - dotVector).normalized;
             }
         }
 
-        private static int GetIndex(int3 gridPosition, int gridSize)
+        private void UpdateMovement(int index, BoidData data)
         {
-            return gridPosition.x + gridSize * gridPosition.y + gridSize * gridSize * gridPosition.z;
+            m_velocities[index] += m_steerings[index] * Time.deltaTime;
+
+            float velocitySq = m_velocities[index].sqrMagnitude;
+            Vector3 forward = m_velocities[index].normalized;
+            if (velocitySq > data.MaxSpeed * data.MaxSpeed)
+                m_velocities[index] = forward * data.MaxSpeed;
+            
+            m_positions[index] += m_velocities[index] * Time.deltaTime;
+            m_transforms[index].position = m_positions[index];
+            
+            m_rotations[index] = Quaternion.LookRotation(forward, Vector3.up);
+            m_transforms[index].rotation = m_rotations[index];
         }
         
         #region Debugging Methods
@@ -536,22 +280,14 @@ namespace Demo.Boids
             [Space]
             public int BoidIndex;
 
-            [NonSerialized]
-            public float3 Position;
-            [NonSerialized]
-            public float3 Velocity;
-            [NonSerialized]
-            public float3 Steering;
-            [NonSerialized]
-            public float3 Probe0;
-            [NonSerialized]
-            public float3 Probe1;
-            [NonSerialized]
-            public float3 Probe2;
-            [NonSerialized]
-            public float3 Probe3;
-            [NonSerialized]
-            public float3 Probe4;
+            [NonSerialized] public Vector3 Position;
+            [NonSerialized] public Vector3 Velocity;
+            [NonSerialized] public Vector3 Steering;
+            [NonSerialized] public Vector3 Probe0;
+            [NonSerialized] public Vector3 Probe1;
+            [NonSerialized] public Vector3 Probe2;
+            [NonSerialized] public Vector3 Probe3;
+            [NonSerialized] public Vector3 Probe4;
         }
 
         /// <summary>
