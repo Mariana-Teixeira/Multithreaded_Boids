@@ -294,12 +294,12 @@ MonoBehaviour:
   m_worldData:
     WorldRadius: 100
     SpawnRadius: 50
-    Count: 5000
+    Count: 2000
   m_boidData:
     MinSpeed: 4
     MaxSpeed: 8
     ProbeLengthMultiplier: 2
-    ProbeAngle: 45
+    ProbeAngle: 60
     SeparationRadius: 5
     SeparationDot: -0.707
     SeparationWeight: 12
@@ -330,6 +330,7 @@ GameObject:
   - component: {fileID: 2016713039}
   - component: {fileID: 2016713038}
   - component: {fileID: 2016713042}
+  - component: {fileID: 2016713043}
   m_Layer: 0
   m_Name: Camera
   m_TagString: Untagged
@@ -455,6 +456,23 @@ MonoBehaviour:
     m_VarianceClampScale: 0.9
     m_ContrastAdaptiveSharpening: 0
   m_Version: 2
+--- !u!114 &2016713043
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2016713035}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 618b0e3f6c65dd247a4a016150006c57, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.RenderPipelines.Core.Runtime::UnityEngine.Rendering.FreeCamera
+  m_LookSpeedController: 120
+  m_LookSpeedMouse: 4
+  m_MoveSpeed: 10
+  m_MoveSpeedIncrement: 2.5
+  m_Turbo: 10
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

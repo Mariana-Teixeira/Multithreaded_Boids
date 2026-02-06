@@ -105,6 +105,8 @@ namespace Demo.Boids
         {
             InstantiateBoids();
             SetGridSize();
+
+            Cursor.lockState = CursorLockMode.Locked;
         }
         
         private void OnValidate()
@@ -140,7 +142,7 @@ namespace Demo.Boids
             // neighbours are located within the 27 adjacent cells.
             m_gridCellSize = math.max(m_boidData.SeparationRadius, m_boidData.CohesionRadius);
             m_gridCellSize = math.max(m_gridCellSize, m_boidData.AlignmentRadius);
-
+            
             m_gridSize = (int)(m_worldData.WorldRadius / m_gridCellSize);
         }
 
@@ -165,7 +167,7 @@ namespace Demo.Boids
             {
                 Positions = m_positions,
                 SpatialHashMap = m_spatialHashMap.AsParallelWriter(),
-                WorldSize = m_worldData.WorldRadius,
+                GridSize = m_gridSize,
                 CellSize = m_gridCellSize
             };
             JobHandle hashHandle = spatialHashGridJob.Schedule(m_worldData.Count, 64);
@@ -242,14 +244,13 @@ namespace Demo.Boids
             [ReadOnly]
             public NativeArray<float3> Positions;
             public NativeParallelMultiHashMap<int, int>.ParallelWriter SpatialHashMap;
-            public float WorldSize;
+            public int GridSize;
             public float CellSize;
             
             public void Execute(int index)
             {
                 int3 gridPosition = (int3)math.floor(Positions[index] / CellSize);
-                int gridSize = (int)(WorldSize / CellSize);
-                int key = GetIndex(gridPosition, gridSize);
+                int key = GetIndex(gridPosition, GridSize);
                 SpatialHashMap.Add(key, index);
             }
         }
@@ -262,10 +263,8 @@ namespace Demo.Boids
         [BurstCompile]
         private struct UpdateProbesJob : IJobParallelFor
         {
-            [ReadOnly]
-            public NativeArray<float3> Positions;
-            [ReadOnly]
-            public NativeArray<float3> Velocities;
+            [ReadOnly] public NativeArray<float3> Positions;
+            [ReadOnly] public NativeArray<float3> Velocities;
             
             [NativeDisableParallelForRestriction]
             public NativeArray<float3> Probes;
@@ -312,13 +311,11 @@ namespace Demo.Boids
         [BurstCompile]
         private struct FlockSteeringJob : IJobParallelFor
         {
-            [ReadOnly]
-            public NativeArray<float3> Positions;
-            [ReadOnly]
-            public NativeArray<float3> Velocities;
+            [ReadOnly] public NativeArray<float3> Positions;
+            [ReadOnly] public NativeArray<float3> Velocities;
+            [ReadOnly] public NativeParallelMultiHashMap<int, int> SpatialHashMap;
+            
             public NativeArray<float3> Steerings;
-            [ReadOnly]
-            public NativeParallelMultiHashMap<int, int> SpatialHashMap;
             public int GridSize;
             public float CellSize;
 
@@ -356,7 +353,7 @@ namespace Demo.Boids
                     int hash = GetIndex(otherGridPosition, GridSize);
 
                     bool fetchValue = SpatialHashMap.TryGetFirstValue(hash, out var other, out var iterator);
-                    if (!fetchValue) return;
+                    if (!fetchValue) continue;
 
                     do
                     {
@@ -414,13 +411,11 @@ namespace Demo.Boids
         [BurstCompile]
         private struct ContainmentSteeringJob : IJobParallelFor
         {
-            [ReadOnly]
-            public NativeArray<float3> Positions;
-            [ReadOnly]
-            public NativeArray<float3> Velocities;
+            [ReadOnly] public NativeArray<float3> Positions;
+            [ReadOnly] public NativeArray<float3> Velocities;
+            [ReadOnly] public NativeArray<float3> Probes;
+            
             public NativeArray<float3> Steerings;
-            [ReadOnly]
-            public NativeArray<float3> Probes;
 
             public float WorldRadius;
             public float MaxSpeed;
@@ -454,24 +449,22 @@ namespace Demo.Boids
                 float a = 1;
                 float b = 2.0f * math.dot(rayDirection, rayOrigin);
                 float c = math.dot(rayOrigin, rayOrigin) - colliderRadius * colliderRadius;
-                SolveQuadratic(a, b, c, out float t);
+                float t = SolveQuadratic(a, b, c);
 
                 return rayOrigin + rayDirection * t;
             }
 
 
             /// <param name="t">Distance between Ray Origin and Collision Point.</param>
-            private void SolveQuadratic(float a, float b, float c, out float t)
+            private float SolveQuadratic(float a, float b, float c)
             {
-                t = 0;
-                
                 float discriminant = b * b - 4 * a * c;
 
                 float q = b > 0 ? 
                     -0.5f * (b + Mathf.Sqrt(discriminant)) : 
                     -0.5f * (b - Mathf.Sqrt(discriminant));
                 
-                t = c / q;
+                return c / q;
             }
 
             /// <summary>
@@ -495,11 +488,11 @@ namespace Demo.Boids
         [BurstCompile]
         private struct UpdateMovementJob : IJobParallelForTransform
         {
+            [ReadOnly] public NativeArray<float3> Steerings;
+
             public NativeArray<float3> Positions;
             public NativeArray<quaternion> Rotations;
             public NativeArray<float3> Velocities;
-            [ReadOnly]
-            public NativeArray<float3> Steerings;
 
             public float MaxSpeed;
             public float DeltaTime;
@@ -520,10 +513,10 @@ namespace Demo.Boids
                 transform.rotation = Rotations[index];
             }
         }
-        
+
         private static int GetIndex(int3 gridPosition, int gridSize)
         {
-            return gridPosition.x + gridPosition.y * gridSize + gridPosition.z * gridSize;
+            return gridPosition.x + gridSize * gridPosition.y + gridSize * gridSize * gridPosition.z;
         }
         
         #region Debugging Methods
