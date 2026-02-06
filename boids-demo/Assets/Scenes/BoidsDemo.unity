@@ -294,7 +294,7 @@ MonoBehaviour:
   m_worldData:
     WorldRadius: 100
     SpawnRadius: 50
-    Count: 2000
+    Count: 10000
   m_boidData:
     MinSpeed: 4
     MaxSpeed: 8
