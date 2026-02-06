@@ -461,8 +461,8 @@ namespace Demo.Boids
                 float discriminant = b * b - 4 * a * c;
 
                 float q = b > 0 ? 
-                    -0.5f * (b + Mathf.Sqrt(discriminant)) : 
-                    -0.5f * (b - Mathf.Sqrt(discriminant));
+                    -0.5f * (b + math.sqrt(discriminant)) : 
+                    -0.5f * (b - math.sqrt(discriminant));
                 
                 return c / q;
             }
