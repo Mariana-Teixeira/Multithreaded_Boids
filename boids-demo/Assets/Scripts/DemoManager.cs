@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using Unity.Mathematics;
 using UnityEngine;
 using Random = UnityEngine.Random;
 
@@ -52,11 +54,14 @@ namespace Demo.Boids
         private BoidData m_boidData;
         
         private Transform[] m_transforms;
-        private Vector3[] m_positions;
         private Quaternion[] m_rotations;
+        private Vector3[] m_positions;
         private Vector3[] m_velocities;
         private Vector3[] m_steerings;
         private Vector3[] m_probes;
+
+        private Dictionary<int, List<int>> m_spatialGrid;
+        public float m_cellSize;
         
         private const int PROBES_PER_BOID = 5;
     
@@ -68,11 +73,16 @@ namespace Demo.Boids
             m_velocities = new Vector3[m_worldData.Count];
             m_steerings = new Vector3[m_worldData.Count];
             m_probes = new Vector3[m_worldData.Count * PROBES_PER_BOID];
+
+            m_spatialGrid = new Dictionary<int, List<int>>();
         }
 
         private void Start()
         {
             InstantiateBoids();
+
+            m_cellSize = Mathf.Max(m_boidData.SeparationRadius, m_boidData.CohesionRadius, m_boidData.AlignmentRadius);
+            
             Cursor.lockState = CursorLockMode.Locked;
         }
         
@@ -109,14 +119,39 @@ namespace Demo.Boids
             m_debugData.Probe3 = m_probes[PROBES_PER_BOID * index + 3];
             m_debugData.Probe4 = m_probes[PROBES_PER_BOID * index + 4];
 #endif
+            
+            m_spatialGrid.Clear();
+            foreach (List<int> indexList in m_spatialGrid.Values)
+            {
+                indexList.Clear();
+            }
 
             for (int i = 0; i < m_worldData.Count; i++)
             {
+                UpdateSpatialGrid(i);
                 UpdateProbes(i, m_boidData);
-                UpdateFlockSteering(i, m_worldData, m_boidData);
+                UpdateFlockSteering(i, m_boidData);
                 UpdateContainmentSteering(i, m_worldData, m_boidData);
                 UpdateMovement(i, m_boidData);
             }
+        }
+        
+        private void UpdateSpatialGrid(int index)
+        {
+            Vector3Int gridPosition = new Vector3Int(
+                Mathf.FloorToInt(m_positions[index].x / m_cellSize),
+                Mathf.FloorToInt(m_positions[index].y / m_cellSize),
+                Mathf.FloorToInt(m_positions[index].z / m_cellSize));
+
+            int key = GetHash(gridPosition);
+
+            if (m_spatialGrid.ContainsKey(key) == false)
+            {
+                var indexList = new List<int>();
+                m_spatialGrid.Add(key, indexList);
+            }
+
+            m_spatialGrid[key].Add(index);
         }
         
         private void UpdateProbes(int index, BoidData data)
@@ -146,7 +181,7 @@ namespace Demo.Boids
             m_probes[index * PROBES_PER_BOID + 4] = originPosition + leftTilt * ray;
         }
 
-        private void UpdateFlockSteering(int index, WorldData worldData, BoidData boidData)
+        private void UpdateFlockSteering(int index, BoidData boidData)
         {
             Vector3 steeringVector = new Vector3();
             Vector3 separationForce = new Vector3();
@@ -155,32 +190,50 @@ namespace Demo.Boids
             
             int cohesionCount = 0;
             int alignmentCount = 0;
-
-            for (int other = 0; other < worldData.Count; other++)
+            
+            Vector3Int myGridPosition = new Vector3Int(
+                Mathf.FloorToInt(m_positions[index].x / m_cellSize),
+                Mathf.FloorToInt(m_positions[index].y / m_cellSize),
+                Mathf.FloorToInt(m_positions[index].z / m_cellSize));
+            
+            for (int x = -1; x <= 1; x++)
+            for (int y = -1; y <= 1; y++)
+            for (int z = -1; z <= 1; z++)
             {
-                if (index == other) continue;
+                Vector3Int otherGridPosition = myGridPosition + new Vector3Int(x, y, z);
+                int hash = GetHash(otherGridPosition);
 
-                Vector3 vectorToNeighbour = m_positions[other] - m_positions[index];
-                float distanceSqToNeighbour = vectorToNeighbour.sqrMagnitude;
+                bool hasHashList = m_spatialGrid.TryGetValue(hash, out var list);
+                if (!hasHashList) continue;
 
-                float dot = Vector3.Dot(m_velocities[index].normalized, vectorToNeighbour.normalized);
-
-                if (distanceSqToNeighbour < boidData.SeparationRadius * boidData.SeparationRadius && dot > boidData.SeparationDot)
+                int count = list.Count;
+                for (int i = 0; i < count; i++)
                 {
-                    float distanceToNeighbour = Mathf.Sqrt(distanceSqToNeighbour);
-                    separationForce += -vectorToNeighbour / distanceToNeighbour;
-                }
+                    int other = list[i];
+                    if (index == other) continue;
 
-                if (distanceSqToNeighbour < boidData.CohesionRadius * boidData.CohesionRadius && dot > boidData.CohesionDot)
-                {
-                    cohesionForce += m_positions[other];
-                    cohesionCount++;
-                }
+                    Vector3 vectorToNeighbour = m_positions[other] - m_positions[index];
+                    float distanceSqToNeighbour = vectorToNeighbour.sqrMagnitude;
 
-                if (distanceSqToNeighbour < boidData.AlignmentRadius * boidData.AlignmentRadius && dot > boidData.AlignmentDot)
-                {
-                    alignmentForce += m_velocities[other];
-                    alignmentCount++;
+                    float dot = Vector3.Dot(m_velocities[index].normalized, vectorToNeighbour.normalized);
+
+                    if (distanceSqToNeighbour < boidData.SeparationRadius * boidData.SeparationRadius && dot > boidData.SeparationDot)
+                    {
+                        float distanceToNeighbour = Mathf.Sqrt(distanceSqToNeighbour);
+                        separationForce += -vectorToNeighbour / distanceToNeighbour;
+                    }
+
+                    if (distanceSqToNeighbour < boidData.CohesionRadius * boidData.CohesionRadius && dot > boidData.CohesionDot)
+                    {
+                        cohesionForce += m_positions[other];
+                        cohesionCount++;
+                    }
+
+                    if (distanceSqToNeighbour < boidData.AlignmentRadius * boidData.AlignmentRadius && dot > boidData.AlignmentDot)
+                    {
+                        alignmentForce += m_velocities[other];
+                        alignmentCount++;
+                    }
                 }
             }
 
@@ -261,6 +314,11 @@ namespace Demo.Boids
             
             m_rotations[index] = Quaternion.LookRotation(forward, Vector3.up);
             m_transforms[index].rotation = m_rotations[index];
+        }
+        
+        private static int GetHash(Vector3Int gridPosition)
+        {
+            return HashCode.Combine(gridPosition);
         }
         
         #region Debugging Methods

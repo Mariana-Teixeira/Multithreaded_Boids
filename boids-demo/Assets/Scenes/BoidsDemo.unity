@@ -309,6 +309,7 @@ MonoBehaviour:
     AlignmentRadius: 7.5
     AlignmentDot: 0.7
     AlignmentWeight: 8
+  m_cellSize: 0
   m_debugData:
     DrawGizmos: 1
     GizmosType:
