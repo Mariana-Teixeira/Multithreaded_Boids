@@ -1,12 +1,10 @@
 using System;
-using System.Collections.Generic;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Jobs;
-using UnityEngine.UI;
 using Random = UnityEngine.Random;
 
 namespace Demo.Boids
@@ -29,7 +27,9 @@ namespace Demo.Boids
             public float MaxSpeed;
             
             [Header("Probes")]
+            [Tooltip("Probe Length is calculated by multiplying the velocity vector by this multiplier.")]
             public float ProbeLengthMultiplier;
+            [Tooltip("Probe Angle defines the tilt rotation of the four directional probes.")]
             public float ProbeAngle;
 
             [Header("Steering")]
@@ -58,6 +58,7 @@ namespace Demo.Boids
         [Space, SerializeField]
         private BoidData m_boidData;
         
+        // Data is stored in NativeArrays to ensure linear memory access, minimizing cache misses and allowing for Burst compilation.
         private TransformAccessArray m_transforms;
         private NativeArray<quaternion> m_rotations;
         private NativeArray<float3> m_positions;
@@ -65,6 +66,8 @@ namespace Demo.Boids
         private NativeArray<float3> m_steerings;
         private NativeArray<float3> m_probes;
 
+        // Spatial Hash Grid cell size is assigned to the highest steering radius to ensure the boids query neighbours
+        // that are within their field of vision.
         private NativeParallelMultiHashMap<uint, int> m_spatialGrid;
         private float m_cellSize;
 
@@ -87,6 +90,8 @@ namespace Demo.Boids
         {
             InstantiateBoids();
 
+            // By setting the grid cell size to the maximum steering radius, we ensure that all potential boid neighbours
+            // are located within the 27 adjacent cells.
             m_cellSize = Mathf.Max(m_boidData.SeparationRadius, m_boidData.CohesionRadius, m_boidData.AlignmentRadius);
             
             Cursor.lockState = CursorLockMode.Locked;
@@ -145,8 +150,8 @@ namespace Demo.Boids
             m_debugData.Probe4 = m_probes[PROBES_PER_BOID * index + 4];
 #endif
 
+            // Rebuilds the spatial hash grid with the boids position.
             m_spatialGrid.Clear();
-
             var spatialGridJob = new SpatialGridJob
             {
                 Positions = m_positions,
@@ -155,6 +160,7 @@ namespace Demo.Boids
             };
             JobHandle spatialGridHandle = spatialGridJob.Schedule(m_worldData.Count, 64);
 
+            // Updates position and rotation of probes based on boid position and velocity.
             var probesJob = new ProbesJob
             {
                 Positions = m_positions,
@@ -167,6 +173,8 @@ namespace Demo.Boids
             
             JobHandle setupHandle = JobHandle.CombineDependencies(spatialGridHandle, probeHandle);
 
+            // Overrides the steering vector to the calculate value (steering = value), because steering behaviours are
+            // only accumulative for one frame.
             var flockSteeringJob = new FlockSteeringJob
             {
                 Positions = m_positions,
@@ -187,6 +195,8 @@ namespace Demo.Boids
             };
             JobHandle flockingSteeringHandle = flockSteeringJob.Schedule(m_worldData.Count, 64, setupHandle);
 
+            // Containment is calculated after flocking to ensure we know where the boid is headed. This increments
+            // to the steering vector by the calculated value (steering += value).
             var containmentSteeringJob = new ContainmentSteeringJob
             {
                 Positions = m_positions,
@@ -198,6 +208,7 @@ namespace Demo.Boids
             };
             JobHandle containmentSteeringHandle = containmentSteeringJob.Schedule(m_worldData.Count, 64, flockingSteeringHandle);
 
+            // Calculates velocity based on the previously calculated steering vector and update boids position.
             var movementJob = new MovementJob
             {
                 Steerings = m_steerings,
@@ -210,6 +221,10 @@ namespace Demo.Boids
             m_boidsHandle = movementJob.Schedule(m_transforms, containmentSteeringHandle);
         }
         
+        /// <summary>
+        /// Using a <c>ParallelMultiHashMap</c> for a spatial hash grid allowed me to reduce the query to O(n).
+        /// Without the spatial hash grid the complexity would rise to O(n^2).
+        /// </summary>
         [BurstCompile]
         private struct SpatialGridJob : IJobParallelFor
         {
@@ -226,6 +241,11 @@ namespace Demo.Boids
             }
         }
         
+        /// <summary>
+        /// Probes are rays intended as a "vision cone" for each boid; they are needed to check for collisions.
+        /// These probes act similarly to the built-in Raycasts, but avoid the performance overhead of the
+        /// physics system.
+        /// </summary>
         [BurstCompile]
         private struct ProbesJob : IJobParallelFor
         {
@@ -238,6 +258,8 @@ namespace Demo.Boids
             public float ProbeLengthMultiplier;
             public float ProbeAngle;
             
+            // Because each boid has five probes, the probes array length is 'WorldData.Count * PROBES_PER_BOID'.
+            // We use 'PROBES_PER_BOID * index + n' where n = { 0..4 } to access the five probes associated with the boid index.
             public void Execute(int index)
             {
                 float3 originPosition = Positions[index];
@@ -250,8 +272,10 @@ namespace Demo.Boids
                 float3 right = math.normalizesafe(cross);
                 float3 up = math.cross(forward, right);
             
+                // Each boid has five probes: the first follows the direction of the velocity.
                 Probes[index * PROBES_PER_BOID] = originPosition + ray;
             
+                // The remaining four are tilted upwards, downwards, leftwards and rightwards.
                 quaternion upTilt = quaternion.AxisAngle(right, ProbeAngle);
                 Probes[index * PROBES_PER_BOID + 1] = originPosition + math.mul(upTilt, ray);
 
@@ -266,6 +290,11 @@ namespace Demo.Boids
             }
         }
 
+        /// <summary>
+        /// Follows a Flock Steering Behaviour by combining Separation, Cohesion and Alignment Behaviours.
+        /// Uses the Spatial Hash Grid to get neighbouring boids of adjacent cells.
+        /// </summary>
+        /// <a href="https://www.red3d.com/cwr/steer/gdc99/">Steering Behaviors For Autonomous Characters</a>
         [BurstCompile]
         private struct FlockSteeringJob : IJobParallelFor
         {
@@ -357,6 +386,12 @@ namespace Demo.Boids
             }
         }
 
+        /// <summary>
+        /// We limit the boids movement to the <c>WorldData.Radius</c> by using object avoidance steering behaviour.
+        /// Since the boids are contained inside a sphere, we use Ray-Sphere Intersection and Probes to calculate when
+        /// and how a boid needs to redirect their steering.
+        /// </summary>
+        /// <a href="https://www.red3d.com/cwr/steer/gdc99/">Steering Behaviors For Autonomous Characters</a>
         [BurstCompile]
         private struct ContainmentSteeringJob : IJobParallelFor
         {
@@ -390,6 +425,11 @@ namespace Demo.Boids
                 Steerings[index] += math.normalizesafe(steering) * MaxSpeed;
             }
 
+            /// <summary>
+            /// We simplified the Analytic Solution presented by Jean-Colas Prunier. This simplification outputs
+            /// the correct position of a collision only when the ray origin is contained within the boundary radius.
+            /// </summary>
+            /// <a href="https://www.scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/ray-sphere-intersection.html">Ray-Sphere Intersection</a>
             private float3 GetCollisionPoint(float3 rayOrigin, float3 rayDirection, float colliderRadius)
             {
                 float a = 1;
@@ -400,6 +440,7 @@ namespace Demo.Boids
                 return rayOrigin + rayDirection * t;
             }
 
+            /// <returns>Distance between Ray Origin and Collision Point.</returns>
             private float SolveQuadratic(float a, float b, float c)
             {
                 float discriminant = b * b - 4 * a * c;
@@ -411,6 +452,11 @@ namespace Demo.Boids
                 return c / q;
             } 
             
+            /// <summary>
+            /// Returning a perpendicular force allows for corrective lateral steering with minimal deceleration.
+            /// Other behaviours, like flee, would cause the boid to slow down and steer perpendicular to the boundary.
+            /// </summary>
+            /// <returns> Returns the steering direction, perpendicular to the velocity, required to steer away from the boundary.</returns>
             private float3 GetPerpendicular(float3 collisionNormal, float3 forwardNormal)
             {
                 float3 dotVector = forwardNormal * math.dot(collisionNormal, forwardNormal);
@@ -418,6 +464,10 @@ namespace Demo.Boids
             }
         }
 
+        /// <summary>
+        /// Apply the steering vector to the boids velocity and clamp the velocity to the <c>BoidData.MaxSpeed</c> to
+        /// prevent infinite acceleration. Finally, update their rotation to "look at" the new velocity direction.
+        /// </summary>
         [BurstCompile]
         private struct MovementJob : IJobParallelForTransform
         {
