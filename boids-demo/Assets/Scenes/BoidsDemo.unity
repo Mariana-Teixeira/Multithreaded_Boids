@@ -293,12 +293,12 @@ MonoBehaviour:
   m_prefab: {fileID: 948602484209512612, guid: 287448af564faa34787d9fd47013348f, type: 3}
   m_worldData:
     WorldRadius: 100
-    SpawnRadius: 50
-    Count: 10000
+    SpawnRadius: 25
+    Count: 2000
   m_boidData:
     MinSpeed: 4
     MaxSpeed: 8
-    ProbeLengthMultiplier: 2
+    ProbeLengthMultiplier: 2.5
     ProbeAngle: 60
     SeparationRadius: 5
     SeparationDot: -0.707
