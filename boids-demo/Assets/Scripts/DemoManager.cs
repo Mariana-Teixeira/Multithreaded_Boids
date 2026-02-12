@@ -93,8 +93,6 @@ namespace Demo.Boids
             // By setting the grid cell size to the maximum steering radius, we ensure that all potential boid neighbours
             // are located within the 27 adjacent cells.
             m_cellSize = Mathf.Max(m_boidData.SeparationRadius, m_boidData.CohesionRadius, m_boidData.AlignmentRadius);
-            
-            Cursor.lockState = CursorLockMode.Locked;
         }
         
         private void OnDestroy()
@@ -321,7 +319,7 @@ namespace Demo.Boids
                 float3 separationForce = new float3();
                 float3 cohesionForce = new float3();
                 float3 alignmentForce = new float3();
-                
+
                 int cohesionCount = 0;
                 int alignmentCount = 0;
 
@@ -368,18 +366,18 @@ namespace Demo.Boids
                     } while (SpatialGrid.TryGetNextValue(out other, ref iterator));
                 }
 
-                steeringVector += separationForce * SeparationWeight;
+                steeringVector += math.normalizesafe(separationForce) * SeparationWeight;
 
                 if (cohesionCount > 0)
                 {
                     cohesionForce = cohesionForce / cohesionCount - Positions[index];
-                    steeringVector += cohesionForce * CohesionWeight;
+                    steeringVector += math.normalize(cohesionForce) * CohesionWeight;
                 }
 
                 if (alignmentCount > 0)
                 {
                     alignmentForce = alignmentForce / alignmentCount;
-                    steeringVector += alignmentForce * AlignmentWeight;
+                    steeringVector += math.normalize(alignmentForce) * AlignmentWeight;
                 }
 
                 Steerings[index] = math.normalizesafe(steeringVector) * MaxSpeed;
