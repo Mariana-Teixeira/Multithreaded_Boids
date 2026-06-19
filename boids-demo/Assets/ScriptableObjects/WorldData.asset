@@ -14,5 +14,5 @@ MonoBehaviour:
   m_EditorClassIdentifier: Demo.Boids::WorldData
   m_worldRadius: 100
   m_spawnRadius: 50
-  m_onStartOptimization: 0
-  m_onStartCount: 1000
+  m_DefaultOptimization: 0
+  m_defaultCount: 1000
