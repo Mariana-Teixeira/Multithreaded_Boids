@@ -25,6 +25,8 @@ namespace Demo.Boids
             [Header("Move")]
             public float MinSpeed;
             public float MaxSpeed;
+            public float FlockAcceleration;
+            public float ContainmentAcceleration;
             
             [Header("Probes")]
             [Tooltip("Probe Length is calculated by multiplying the velocity vector by this multiplier.")]
@@ -189,7 +191,7 @@ namespace Demo.Boids
                 AlignmentRadius = m_boidData.AlignmentRadius,
                 AlignmentDot = m_boidData.AlignmentDot,
                 AlignmentWeight = m_boidData.AlignmentWeight,
-                MaxSpeed = m_boidData.MaxSpeed
+                SteeringAcceleration = m_boidData.FlockAcceleration
             };
             JobHandle flockingSteeringHandle = flockSteeringJob.Schedule(m_worldData.Count, 64, setupHandle);
 
@@ -202,7 +204,7 @@ namespace Demo.Boids
                 Probes = m_probes,
                 Steerings = m_steerings,
                 WorldRadius = m_worldData.WorldRadius,
-                MaxSpeed = m_boidData.MaxSpeed
+                SteeringAcceleration = m_boidData.ContainmentAcceleration
             };
             JobHandle containmentSteeringHandle = containmentSteeringJob.Schedule(m_worldData.Count, 64, flockingSteeringHandle);
 
@@ -311,7 +313,7 @@ namespace Demo.Boids
             public float AlignmentRadius;
             public float AlignmentDot;
             public float AlignmentWeight;
-            public float MaxSpeed;
+            public float SteeringAcceleration;
             
             public void Execute(int index)
             {
@@ -344,7 +346,7 @@ namespace Demo.Boids
 
                         float dot = math.dot(
                             math.normalizesafe(Velocities[index]),
-                            math.normalize(vectorToNeighbour));
+                            math.normalizesafe(vectorToNeighbour));
                         
                         if (distanceSqToNeighbour < SeparationRadius * SeparationRadius && dot > SeparationDot)
                         {
@@ -366,21 +368,27 @@ namespace Demo.Boids
                     } while (SpatialGrid.TryGetNextValue(out other, ref iterator));
                 }
 
-                steeringVector += math.normalizesafe(separationForce) * SeparationWeight;
+                steeringVector += separationForce * SeparationWeight;
 
                 if (cohesionCount > 0)
                 {
                     cohesionForce = cohesionForce / cohesionCount - Positions[index];
-                    steeringVector += math.normalize(cohesionForce) * CohesionWeight;
+                    steeringVector += cohesionForce * CohesionWeight;
                 }
 
                 if (alignmentCount > 0)
                 {
                     alignmentForce = alignmentForce / alignmentCount;
-                    steeringVector += math.normalize(alignmentForce) * AlignmentWeight;
+                    steeringVector += alignmentForce * AlignmentWeight;
+                }
+                
+                float steeringLengthSq = math.lengthsq(steeringVector);
+                if (steeringLengthSq > SteeringAcceleration * SteeringAcceleration)
+                {
+                    steeringVector = math.normalizesafe(steeringVector) * SteeringAcceleration;
                 }
 
-                Steerings[index] = math.normalizesafe(steeringVector) * MaxSpeed;
+                Steerings[index] = steeringVector;
             }
         }
 
@@ -399,7 +407,7 @@ namespace Demo.Boids
 
             public NativeArray<float3> Steerings;
             public float WorldRadius;
-            public float MaxSpeed;
+            public float SteeringAcceleration;
             
             public void Execute(int index)
             {
@@ -409,18 +417,21 @@ namespace Demo.Boids
                 {
                     float3 probe = Probes[index * PROBES_PER_BOID + i];
                     if (math.lengthsq(probe) < WorldRadius * WorldRadius) continue;
+                    
+                    float probeLength = math.length(probe);
+                    float ratioPenetration = (probeLength - WorldRadius) / probeLength;
 
-                    float3 probeDirection = math.normalize(probe - Positions[index]);
+                    float3 probeDirection = math.normalizesafe(probe - Positions[index]);
                     float3 collisionPoint = GetCollisionPoint(Positions[index], probeDirection, WorldRadius);
 
-                    float3 collisionNormal = math.normalize(-collisionPoint);
+                    float3 collisionNormal = math.normalizesafe(-collisionPoint);
                     float3 velocityNormal = math.normalizesafe(-Velocities[index]);
                     float3 perpendicular = GetPerpendicular(collisionNormal, velocityNormal);
             
-                    steering += perpendicular;
+                    steering += perpendicular * ratioPenetration;
                 }
 
-                Steerings[index] += math.normalizesafe(steering) * MaxSpeed;
+                Steerings[index] += math.normalizesafe(steering) * SteeringAcceleration;
             }
 
             /// <summary>
@@ -430,6 +441,11 @@ namespace Demo.Boids
             /// <a href="https://www.scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/ray-sphere-intersection.html">Ray-Sphere Intersection</a>
             private float3 GetCollisionPoint(float3 rayOrigin, float3 rayDirection, float colliderRadius)
             {
+                if (math.lengthsq(rayOrigin) > WorldRadius * WorldRadius)
+                {
+                    rayOrigin = math.normalizesafe(rayOrigin) * WorldRadius;
+                }
+                
                 float a = 1;
                 float b = 2.0f * math.dot(rayDirection, rayOrigin);
                 float c = math.dot(rayOrigin, rayOrigin) - colliderRadius * colliderRadius;
@@ -458,7 +474,7 @@ namespace Demo.Boids
             private float3 GetPerpendicular(float3 collisionNormal, float3 forwardNormal)
             {
                 float3 dotVector = forwardNormal * math.dot(collisionNormal, forwardNormal);
-                return math.normalize(collisionNormal - dotVector);
+                return math.normalizesafe(collisionNormal - dotVector);
             }
         }
 
