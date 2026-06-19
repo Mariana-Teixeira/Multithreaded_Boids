@@ -12,7 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 6d4bf82af6e9222428074734db31c9d9, type: 3}
   m_Name: WorldData
   m_EditorClassIdentifier: Demo.Boids::WorldData
-  Configuration: 1
-  WorldRadius: 100
-  SpawnRadius: 50
-  Count: 7000
+  m_worldRadius: 100
+  m_spawnRadius: 50
+  m_onStartOptimization: 0
+  m_onStartCount: 1000

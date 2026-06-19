@@ -4,17 +4,22 @@ using Unity.Jobs;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Jobs;
+using UnityEngine.UI;
 using Random = UnityEngine.Random;
 
 namespace Demo.Boids
 {
     public class DemoManager : MonoBehaviour
     {
-        [SerializeField] private GameObject m_prefab;
-        [Space, SerializeField] private WorldData m_worldData;
-        [Space, SerializeField] private BoidData m_boidData;
-        [Space, SerializeField] private DebugData m_debugData;
-
+        private const int PROBES_PER_BOID = 5;
+        
+        [Header("Data")]
+        [SerializeField] private WorldData m_worldData;
+        [SerializeField] private BoidData m_boidData;
+        
+        [Header("Debug")]
+        [SerializeField] private bool m_spawnDebugOnStart;
+        
         // Data is stored in NativeArrays to ensure linear memory access, minimizing cache misses and allowing for Burst compilation.
         private TransformAccessArray m_transforms;
         private NativeArray<quaternion> m_rotations;
@@ -29,19 +34,31 @@ namespace Demo.Boids
         private float m_cellSize;
 
         private JobHandle m_boidsHandle;
-
-        private const int PROBES_PER_BOID = 5;
-
+        
         private GameObject m_boidParent;
+
+        private DemoDebug m_demoDebug;
+        
+        private Optimization m_optimization;
+        private int m_count;
 
         private void Awake()
         {
-            SetVariables();
+            m_optimization = m_worldData.OnStartOptimization;
+            m_count = m_worldData.OnStartCount;
+            
+            ResetVariables();
         }
 
         private void Start()
         {
             InstantiateBoids();
+
+            if (m_spawnDebugOnStart)
+            {
+                GameObject debugGO = new GameObject("DemoDebug");
+                m_demoDebug = debugGO.AddComponent<DemoDebug>();
+            }
         }
 
         private void OnDestroy()
@@ -53,21 +70,31 @@ namespace Demo.Boids
         {
             DestroyAllBoids();
             DisposeState();
-            SetVariables();
+            ResetVariables();
             InstantiateBoids();
         }
 
-        private void SetVariables()
+        public void SetConfiguration(int mode)
+        {
+            m_optimization = (Optimization)mode;
+        }
+    
+        public void SetCount(Slider slider)
+        {
+            m_count = (int)slider.value * 1000;
+        }
+
+        private void ResetVariables()
         {
             m_cellSize = Mathf.Max(m_boidData.SeparationRadius, m_boidData.CohesionRadius, m_boidData.AlignmentRadius);
+            
+            m_rotations = new NativeArray<quaternion>(m_count, Allocator.Persistent);
+            m_positions = new NativeArray<float3>(m_count, Allocator.Persistent);
+            m_velocities = new NativeArray<float3>(m_count, Allocator.Persistent);
+            m_steerings = new NativeArray<float3>(m_count, Allocator.Persistent);
+            m_probes = new NativeArray<float3>(m_count * PROBES_PER_BOID, Allocator.Persistent);
 
-            m_rotations = new NativeArray<quaternion>(m_worldData.Count, Allocator.Persistent);
-            m_positions = new NativeArray<float3>(m_worldData.Count, Allocator.Persistent);
-            m_velocities = new NativeArray<float3>(m_worldData.Count, Allocator.Persistent);
-            m_steerings = new NativeArray<float3>(m_worldData.Count, Allocator.Persistent);
-            m_probes = new NativeArray<float3>(m_worldData.Count * PROBES_PER_BOID, Allocator.Persistent);
-
-            m_spatialGrid = new NativeParallelMultiHashMap<uint, int>(m_worldData.Count, Allocator.Persistent);
+            m_spatialGrid = new NativeParallelMultiHashMap<uint, int>(m_count, Allocator.Persistent);
         }
 
         private void DisposeState()
@@ -86,13 +113,13 @@ namespace Demo.Boids
         {
             m_boidParent = new GameObject("BoidParent");
 
-            Transform[] transforms = new Transform[m_worldData.Count];
-            for (int index = 0; index < m_worldData.Count; index++)
+            Transform[] transforms = new Transform[m_count];
+            for (int index = 0; index < m_count; index++)
             {
                 Vector3 randomPosition = Random.insideUnitSphere * m_worldData.SpawnRadius;
                 Quaternion randomRotation = Random.rotationUniform;
 
-                GameObject boid = Instantiate(m_prefab, randomPosition, randomRotation, m_boidParent.transform);
+                GameObject boid = Instantiate(m_boidData.Prefab, randomPosition, randomRotation, m_boidParent.transform);
                 boid.name = $"Boids_{index}";
 
                 float speed = Random.Range(m_boidData.MinSpeed, m_boidData.MaxSpeed);
@@ -117,10 +144,7 @@ namespace Demo.Boids
             m_boidsHandle.Complete();
 
 #if UNITY_EDITOR
-            if (m_debugData)
-            {
-                m_debugData.UpdateDebug(m_positions, m_velocities, m_steerings, m_probes);
-            }
+            m_demoDebug?.UpdateDebug(m_positions, m_velocities, m_steerings, m_probes);
 #endif
 
             // Rebuilds the spatial hash grid with the boids position.
@@ -149,8 +173,8 @@ namespace Demo.Boids
                 Positions = m_positions,
                 Velocities = m_velocities,
                 SpatialGrid = m_spatialGrid,
-                BoidCount = m_worldData.Count,
-                UseSpatialGrid = m_worldData.Configuration is Configuration.Mode2 or Configuration.Mode3,
+                BoidCount = m_count,
+                UseSpatialGrid = m_optimization is Optimization.SpatialPartition or Optimization.MultiThread,
                 Steerings = m_steerings,
                 CellSize = m_cellSize,
                 SeparationRadius = m_boidData.SeparationRadius,
@@ -188,33 +212,33 @@ namespace Demo.Boids
                 MaxSpeed = m_boidData.MaxSpeed
             };
 
-            switch (m_worldData.Configuration)
+            switch (m_optimization)
             {
-                case Configuration.Mode1:
-                    probesJob.Run(m_worldData.Count);
-                    flockSteeringJob.Run(m_worldData.Count);
-                    containmentSteeringJob.Run(m_worldData.Count);
+                case Optimization.SingleThread:
+                    probesJob.Run(m_count);
+                    flockSteeringJob.Run(m_count);
+                    containmentSteeringJob.Run(m_count);
                     m_boidsHandle = movementJob.Schedule(m_transforms);
                     m_boidsHandle.Complete();
                     break;
 
-                case Configuration.Mode2:
-                    spatialGridJob.Run(m_worldData.Count);
-                    probesJob.Run(m_worldData.Count);
-                    flockSteeringJob.Run(m_worldData.Count);
-                    containmentSteeringJob.Run(m_worldData.Count);
+                case Optimization.SpatialPartition:
+                    spatialGridJob.Run(m_count);
+                    probesJob.Run(m_count);
+                    flockSteeringJob.Run(m_count);
+                    containmentSteeringJob.Run(m_count);
                     m_boidsHandle = movementJob.Schedule(m_transforms);
                     m_boidsHandle.Complete();
                     break;
 
-                case Configuration.Mode3:
+                case Optimization.MultiThread:
                 {
-                    JobHandle spatialGridHandle = spatialGridJob.Schedule(m_worldData.Count, 64);
-                    JobHandle probeHandle = probesJob.Schedule(m_worldData.Count, 64);
+                    JobHandle spatialGridHandle = spatialGridJob.Schedule(m_count, 64);
+                    JobHandle probeHandle = probesJob.Schedule(m_count, 64);
                     JobHandle setupHandle = JobHandle.CombineDependencies(spatialGridHandle, probeHandle);
-                    JobHandle flockingSteeringHandle = flockSteeringJob.Schedule(m_worldData.Count, 64, setupHandle);
+                    JobHandle flockingSteeringHandle = flockSteeringJob.Schedule(m_count, 64, setupHandle);
                     JobHandle containmentSteeringHandle =
-                        containmentSteeringJob.Schedule(m_worldData.Count, 64, flockingSteeringHandle);
+                        containmentSteeringJob.Schedule(m_count, 64, flockingSteeringHandle);
                     m_boidsHandle = movementJob.Schedule(m_transforms, containmentSteeringHandle);
                     break;
                 }

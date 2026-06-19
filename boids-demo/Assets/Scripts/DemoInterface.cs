@@ -1,4 +1,3 @@
-using System;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -10,14 +9,14 @@ public class DemoInterface : MonoBehaviour
     [SerializeField] private Slider m_countSlider;
     [SerializeField] private Dropdown m_modeDropdown;
     
-    private void Start()
+    public void Awake()
     {
-        m_countText.text = $"{m_worldData.Count} Boids";
-        m_countSlider.value = (int)(m_worldData.Count / 1000);
-        m_modeDropdown.value = (int)m_worldData.Configuration;
+        m_modeDropdown.SetValueWithoutNotify((int)m_worldData.OnStartOptimization);
+        m_countSlider.SetValueWithoutNotify((int)(m_worldData.OnStartCount / 1000));
+        m_countText.text = $"{m_worldData.OnStartCount} Boids";
     }
 
-    public void ChangeCountText(Single count)
+    public void ChangeCountText(float count)
     {
         m_countText.text = $"{count * 1000} Boids";
     }

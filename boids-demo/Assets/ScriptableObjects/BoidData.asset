@@ -12,18 +12,19 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 8e4925847e094fa4ea7ef301e163a1f8, type: 3}
   m_Name: BoidData
   m_EditorClassIdentifier: Demo.Boids::BoidData
-  MinSpeed: 8
-  MaxSpeed: 12
-  FlockAcceleration: 16
-  ContainmentAcceleration: 22
-  ProbeLengthMultiplier: 1.5
-  ProbeAngle: 35
-  SeparationRadius: 2.5
-  SeparationDot: -0.707
-  SeparationWeight: 23
-  CohesionRadius: 9
-  CohesionDot: -0.15
-  CohesionWeight: 8
-  AlignmentRadius: 7.5
-  AlignmentDot: 0.7
-  AlignmentWeight: 8
+  m_prefab: {fileID: 948602484209512612, guid: 287448af564faa34787d9fd47013348f, type: 3}
+  m_minSpeed: 8
+  m_maxSpeed: 12
+  m_flockAcceleration: 14
+  m_containmentAcceleration: 18
+  m_probeLengthMultiplier: 1
+  m_probeAngle: 35
+  m_separationRadius: 2.5
+  m_separationDot: -0.707
+  m_separationWeight: 12
+  m_cohesionRadius: 9
+  m_cohesionDot: -0.15
+  m_cohesionWeight: 8
+  m_alignmentRadius: 7.5
+  m_alignmentDot: 0.7
+  m_alignmentWeight: 8
