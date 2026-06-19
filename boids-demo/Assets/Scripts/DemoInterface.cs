@@ -9,11 +9,11 @@ public class DemoInterface : MonoBehaviour
     [SerializeField] private Slider m_countSlider;
     [SerializeField] private Dropdown m_modeDropdown;
     
-    public void Awake()
+    private void Awake()
     {
-        m_modeDropdown.SetValueWithoutNotify((int)m_worldData.OnStartOptimization);
-        m_countSlider.SetValueWithoutNotify((int)(m_worldData.OnStartCount / 1000));
-        m_countText.text = $"{m_worldData.OnStartCount} Boids";
+        m_modeDropdown.SetValueWithoutNotify((int)m_worldData.DefaultOptimization);
+        m_countSlider.SetValueWithoutNotify((int)(m_worldData.DefaultCount / 1000));
+        m_countText.text = $"{m_worldData.DefaultCount} Boids";
     }
 
     public void ChangeCountText(float count)

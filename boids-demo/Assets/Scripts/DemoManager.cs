@@ -44,8 +44,8 @@ namespace Demo.Boids
 
         private void Awake()
         {
-            m_optimization = m_worldData.OnStartOptimization;
-            m_count = m_worldData.OnStartCount;
+            m_optimization = m_worldData.DefaultOptimization;
+            m_count = m_worldData.DefaultCount;
             
             ResetVariables();
         }
@@ -54,11 +54,13 @@ namespace Demo.Boids
         {
             InstantiateBoids();
 
+#if UNITY_EDITOR
             if (m_spawnDebugOnStart)
             {
                 GameObject debugGO = new GameObject("DemoDebug");
                 m_demoDebug = debugGO.AddComponent<DemoDebug>();
             }
+#endif
         }
 
         private void OnDestroy()
