@@ -12,12 +12,12 @@ public class DemoInterface : MonoBehaviour
     private void Awake()
     {
         m_modeDropdown.SetValueWithoutNotify((int)m_worldData.DefaultOptimization);
-        m_countSlider.SetValueWithoutNotify((int)(m_worldData.DefaultCount / 1000));
-        m_countText.text = $"{m_worldData.DefaultCount} Boids";
+        m_countSlider.SetValueWithoutNotify((int)(m_worldData.DefaultCount / m_worldData.DefaultMultiplier));
+        m_countText.text = $"{m_worldData.GetCount()} Boids";
     }
 
     public void ChangeCountText(float count)
     {
-        m_countText.text = $"{count * 1000} Boids";
+        m_countText.text = $"{count * m_worldData.DefaultMultiplier} Boids";
     }
 }

@@ -15,4 +15,5 @@ MonoBehaviour:
   m_worldRadius: 100
   m_spawnRadius: 50
   m_DefaultOptimization: 0
-  m_defaultCount: 1000
+  m_defaultCount: 1
+  m_defaultMultiplier: 1000

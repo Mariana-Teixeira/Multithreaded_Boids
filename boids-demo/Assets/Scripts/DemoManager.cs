@@ -45,7 +45,7 @@ namespace Demo.Boids
         private void Awake()
         {
             m_optimization = m_worldData.DefaultOptimization;
-            m_count = m_worldData.DefaultCount;
+            m_count = m_worldData.GetCount();
             
             ResetVariables();
         }
@@ -83,7 +83,7 @@ namespace Demo.Boids
     
         public void SetCount(Slider slider)
         {
-            m_count = (int)slider.value * 1000;
+            m_count = (int)slider.value * m_worldData.DefaultMultiplier;
         }
 
         private void ResetVariables()
