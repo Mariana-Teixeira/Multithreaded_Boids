@@ -3,16 +3,17 @@ using UnityEngine.UI;
 
 public class DemoInterface : MonoBehaviour
 {
+    [SerializeField] private BoidData m_boidData;
     [SerializeField] private WorldData m_worldData;
     
     [SerializeField] private Text m_countText;
     [SerializeField] private Slider m_countSlider;
-    [SerializeField] private Dropdown m_modeDropdown;
     
     private void Awake()
     {
-        m_modeDropdown.SetValueWithoutNotify((int)m_worldData.DefaultOptimization);
-        m_countSlider.SetValueWithoutNotify((int)(m_worldData.DefaultCount / m_worldData.DefaultMultiplier));
+        m_countSlider.minValue = 1;
+        m_countSlider.maxValue = 10;
+        m_countSlider.SetValueWithoutNotify(m_worldData.DefaultCount);
         m_countText.text = $"{m_worldData.GetCount()} Boids";
     }
 

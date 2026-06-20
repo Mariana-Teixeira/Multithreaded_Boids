@@ -3,15 +3,13 @@ using UnityEngine;
 [CreateAssetMenu(fileName = "WorldData", menuName = "Data/World")]
 public class WorldData : ScriptableObject
 {
-    [SerializeField] private float m_worldRadius;
-    [SerializeField] private float m_spawnRadius;
-    [SerializeField] private Optimization m_DefaultOptimization;
+    [SerializeField] private float m_defaultWorldRadius;
+    [SerializeField] private float m_defaultSpawnRadius;
     [Range(1, 10), SerializeField] private int m_defaultCount;
     [SerializeField] private int m_defaultMultiplier;
 
-    public float WorldRadius => m_worldRadius;
-    public float SpawnRadius => m_spawnRadius;
-    public Optimization DefaultOptimization => m_DefaultOptimization;
+    public float DefaultWorldRadius => m_defaultWorldRadius;
+    public float DefaultSpawnRadius => m_defaultSpawnRadius;
     public int DefaultCount => m_defaultCount;
     public int DefaultMultiplier => m_defaultMultiplier;
 

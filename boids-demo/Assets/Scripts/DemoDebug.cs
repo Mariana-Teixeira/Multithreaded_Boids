@@ -5,16 +5,23 @@ using UnityEngine;
 public class DemoDebug : MonoBehaviour
 {
 #if UNITY_EDITOR
-    [SerializeField] private WorldData m_worldData;
     
-    [SerializeField] private bool m_drawGizmos;
-    [SerializeField] private float m_pointRadius;
+    [SerializeField] private bool m_drawGizmos = true;
+    [SerializeField] private float m_pointRadius = 5.0f;
 
+    private float m_worldRadius;
+    private float m_spawnRadius;
     private float3 m_position;
     private float3 m_velocity;
     private float3 m_steering;
     private readonly float3[] m_probes = new float3[5];
 
+    public void SetWorldData(float worldRadius, float spawnRadius)
+    {
+        m_worldRadius = worldRadius;
+        m_spawnRadius = spawnRadius;
+    }
+    
     private void OnDrawGizmos()
     {
         if (!m_drawGizmos) return;
@@ -40,8 +47,8 @@ public class DemoDebug : MonoBehaviour
     private void DrawWorld()
     {
         Gizmos.color = Color.black;
-        Gizmos.DrawWireSphere(float3.zero, m_worldData.WorldRadius);
-        Gizmos.DrawWireSphere(float3.zero, m_worldData.SpawnRadius);
+        Gizmos.DrawWireSphere(float3.zero, m_worldRadius);
+        Gizmos.DrawWireSphere(float3.zero, m_spawnRadius);
     }
 
     private void DrawSteering()

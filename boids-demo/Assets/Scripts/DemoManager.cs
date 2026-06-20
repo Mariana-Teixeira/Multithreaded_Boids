@@ -11,8 +11,6 @@ namespace Demo.Boids
 {
     public class DemoManager : MonoBehaviour
     {
-        private const int PROBES_PER_BOID = 5;
-        
         [Header("Data")]
         [SerializeField] private WorldData m_worldData;
         [SerializeField] private BoidData m_boidData;
@@ -39,12 +37,15 @@ namespace Demo.Boids
 
         private DemoDebug m_demoDebug;
         
-        private Optimization m_optimization;
+        private bool m_useSpatialGrid;
+        private int m_perceivedBoidsPerCell;
+        private float m_spawnRadius;
         private int m_count;
 
         private void Awake()
         {
-            m_optimization = m_worldData.DefaultOptimization;
+            m_perceivedBoidsPerCell = DemoData.DEFAULT_CELL_MULTIPLIER * DemoData.MAX_CELL_COUNT;
+            m_spawnRadius = m_worldData.DefaultSpawnRadius;
             m_count = m_worldData.GetCount();
             
             ResetVariables();
@@ -59,6 +60,7 @@ namespace Demo.Boids
             {
                 GameObject debugGO = new GameObject("DemoDebug");
                 m_demoDebug = debugGO.AddComponent<DemoDebug>();
+                m_demoDebug.SetWorldData(m_worldData.DefaultWorldRadius, m_spawnRadius);
             }
 #endif
         }
@@ -75,15 +77,11 @@ namespace Demo.Boids
             ResetVariables();
             InstantiateBoids();
         }
-
-        public void SetConfiguration(int mode)
-        {
-            m_optimization = (Optimization)mode;
-        }
     
         public void SetCount(Slider slider)
         {
             m_count = (int)slider.value * m_worldData.DefaultMultiplier;
+            m_spawnRadius = m_worldData.DefaultSpawnRadius * (slider.value * 0.1f);
         }
 
         private void ResetVariables()
@@ -94,7 +92,7 @@ namespace Demo.Boids
             m_positions = new NativeArray<float3>(m_count, Allocator.Persistent);
             m_velocities = new NativeArray<float3>(m_count, Allocator.Persistent);
             m_steerings = new NativeArray<float3>(m_count, Allocator.Persistent);
-            m_probes = new NativeArray<float3>(m_count * PROBES_PER_BOID, Allocator.Persistent);
+            m_probes = new NativeArray<float3>(m_count * DemoData.PROBES_PER_BOID, Allocator.Persistent);
 
             m_spatialGrid = new NativeParallelMultiHashMap<uint, int>(m_count, Allocator.Persistent);
         }
@@ -118,7 +116,7 @@ namespace Demo.Boids
             Transform[] transforms = new Transform[m_count];
             for (int index = 0; index < m_count; index++)
             {
-                Vector3 randomPosition = Random.insideUnitSphere * m_worldData.SpawnRadius;
+                Vector3 randomPosition = Random.insideUnitSphere * m_spawnRadius;
                 Quaternion randomRotation = Random.rotationUniform;
 
                 GameObject boid = Instantiate(m_boidData.Prefab, randomPosition, randomRotation, m_boidParent.transform);
@@ -175,8 +173,7 @@ namespace Demo.Boids
                 Positions = m_positions,
                 Velocities = m_velocities,
                 SpatialGrid = m_spatialGrid,
-                BoidCount = m_count,
-                UseSpatialGrid = m_optimization is Optimization.SpatialPartition or Optimization.MultiThread,
+                MaxPerceivedBoidsPerCell = m_perceivedBoidsPerCell, // We look for boids in a 3x3x3 Spatial Grid.
                 Steerings = m_steerings,
                 CellSize = m_cellSize,
                 SeparationRadius = m_boidData.SeparationRadius,
@@ -199,7 +196,7 @@ namespace Demo.Boids
                 Velocities = m_velocities,
                 Probes = m_probes,
                 Steerings = m_steerings,
-                WorldRadius = m_worldData.WorldRadius,
+                WorldRadius = m_worldData.DefaultWorldRadius,
                 SteeringAcceleration = m_boidData.ContainmentAcceleration
             };
 
@@ -214,37 +211,13 @@ namespace Demo.Boids
                 MaxSpeed = m_boidData.MaxSpeed
             };
 
-            switch (m_optimization)
-            {
-                case Optimization.SingleThread:
-                    probesJob.Run(m_count);
-                    flockSteeringJob.Run(m_count);
-                    containmentSteeringJob.Run(m_count);
-                    m_boidsHandle = movementJob.Schedule(m_transforms);
-                    m_boidsHandle.Complete();
-                    break;
-
-                case Optimization.SpatialPartition:
-                    spatialGridJob.Run(m_count);
-                    probesJob.Run(m_count);
-                    flockSteeringJob.Run(m_count);
-                    containmentSteeringJob.Run(m_count);
-                    m_boidsHandle = movementJob.Schedule(m_transforms);
-                    m_boidsHandle.Complete();
-                    break;
-
-                case Optimization.MultiThread:
-                {
-                    JobHandle spatialGridHandle = spatialGridJob.Schedule(m_count, 64);
-                    JobHandle probeHandle = probesJob.Schedule(m_count, 64);
-                    JobHandle setupHandle = JobHandle.CombineDependencies(spatialGridHandle, probeHandle);
-                    JobHandle flockingSteeringHandle = flockSteeringJob.Schedule(m_count, 64, setupHandle);
-                    JobHandle containmentSteeringHandle =
-                        containmentSteeringJob.Schedule(m_count, 64, flockingSteeringHandle);
-                    m_boidsHandle = movementJob.Schedule(m_transforms, containmentSteeringHandle);
-                    break;
-                }
-            }
+            JobHandle spatialGridHandle = spatialGridJob.Schedule(m_count, 64);
+            JobHandle probeHandle = probesJob.Schedule(m_count, 64);
+            JobHandle setupHandle = JobHandle.CombineDependencies(spatialGridHandle, probeHandle);
+            JobHandle flockingSteeringHandle = flockSteeringJob.Schedule(m_count, 64, setupHandle);
+            JobHandle containmentSteeringHandle =
+            containmentSteeringJob.Schedule(m_count, 64, flockingSteeringHandle);
+            m_boidsHandle = movementJob.Schedule(m_transforms, containmentSteeringHandle);
         }
 
         /// <summary>
@@ -298,20 +271,20 @@ namespace Demo.Boids
                 float3 up = math.cross(forward, right);
 
                 // Each boid has five probes: the first follows the direction of the velocity.
-                Probes[index * PROBES_PER_BOID] = originPosition + ray;
+                Probes[index * DemoData.PROBES_PER_BOID] = originPosition + ray;
 
                 // The remaining four are tilted upwards, downwards, leftwards and rightwards.
                 quaternion upTilt = quaternion.AxisAngle(right, ProbeAngle);
-                Probes[index * PROBES_PER_BOID + 1] = originPosition + math.mul(upTilt, ray);
+                Probes[index * DemoData.PROBES_PER_BOID + 1] = originPosition + math.mul(upTilt, ray);
 
                 quaternion downTilt = quaternion.AxisAngle(right, -ProbeAngle);
-                Probes[index * PROBES_PER_BOID + 2] = originPosition + math.mul(downTilt, ray);
+                Probes[index * DemoData.PROBES_PER_BOID + 2] = originPosition + math.mul(downTilt, ray);
 
                 quaternion rightTilt = quaternion.AxisAngle(up, ProbeAngle);
-                Probes[index * PROBES_PER_BOID + 3] = originPosition + math.mul(rightTilt, ray);
+                Probes[index * DemoData.PROBES_PER_BOID + 3] = originPosition + math.mul(rightTilt, ray);
 
                 quaternion leftTilt = quaternion.AxisAngle(up, -ProbeAngle);
-                Probes[index * PROBES_PER_BOID + 4] = originPosition + math.mul(leftTilt, ray);
+                Probes[index * DemoData.PROBES_PER_BOID + 4] = originPosition + math.mul(leftTilt, ray);
             }
         }
 
@@ -326,10 +299,7 @@ namespace Demo.Boids
             [ReadOnly] public NativeArray<float3> Positions;
             [ReadOnly] public NativeArray<float3> Velocities;
             [ReadOnly] public NativeParallelMultiHashMap<uint, int> SpatialGrid;
-
-            public int BoidCount;
-            public bool UseSpatialGrid;
-
+            
             public NativeArray<float3> Steerings;
             public float CellSize;
             public float SeparationRadius;
@@ -342,6 +312,8 @@ namespace Demo.Boids
             public float AlignmentDot;
             public float AlignmentWeight;
             public float SteeringAcceleration;
+            
+            public int MaxPerceivedBoidsPerCell;
 
             private struct Forces
             {
@@ -356,19 +328,15 @@ namespace Demo.Boids
 
             public void Execute(int index)
             {
-
                 var forces = new Forces();
-                var myGridPosition = (int3)math.floor(Positions[index] / CellSize);
+                var gridPosition = (int3)math.floor(Positions[index] / CellSize);
+                var normalizedVelocity = math.normalizesafe(Velocities[index]);
+                
+                float maximumRadius = math.max(SeparationRadius, CohesionRadius);
+                maximumRadius = math.max(AlignmentRadius, maximumRadius);
 
-                if (UseSpatialGrid)
-                {
-                    SpatialPartitioning(index, myGridPosition, ref forces);
-                }
-                else
-                {
-                    Loop(index, ref forces);
-                }
-
+                SpatialPartitioning(index, gridPosition, normalizedVelocity, maximumRadius, ref forces);
+                
                 forces.SteeringVector += forces.SeparationForce * SeparationWeight;
 
                 if (forces.CohesionCount > 0)
@@ -392,61 +360,58 @@ namespace Demo.Boids
                 Steerings[index] = forces.SteeringVector;
             }
 
-            private void Loop(int index, ref Forces forces)
+            private void SpatialPartitioning(int index, int3 gridPosition, float3 normalizedVelocity, float maximumRadius, ref Forces forces)
             {
-                for (int other = 0; other < BoidCount; other++)
-                {
-                    if (index == other) continue;
-                    CalculateForces(index, other, ref forces);
-                }
-            }
+                float3 position = Positions[index];
 
-            private void SpatialPartitioning(int index, int3 myGridPosition, ref Forces forces)
-            {
                 for (int x = -1; x <= 1; x++)
                 for (int y = -1; y <= 1; y++)
                 for (int z = -1; z <= 1; z++)
                 {
-                    int3 otherGridPosition = myGridPosition + new int3(x, y, z);
+                    int3 otherGridPosition = gridPosition + new int3(x, y, z);
                     uint hash = GetHash(otherGridPosition);
+                    int boidsPerCell = 0;
 
                     bool hasHashList = SpatialGrid.TryGetFirstValue(hash, out var other, out var iterator);
                     if (!hasHashList) continue;
-
+                    
                     do
                     {
                         if (index == other) continue;
-                        CalculateForces(index, other, ref forces);
+                        if (boidsPerCell > MaxPerceivedBoidsPerCell) break;
+                        
+                        float3 otherPosition = Positions[other];
+                        
+                        float3 distanceVector = otherPosition - position;
+                        float distanceSq = math.lengthsq(distanceVector);
+
+                        bool visible = distanceSq < maximumRadius * maximumRadius;
+                        if (!visible) continue;
+                        
+                        float3 normalizeDistanceVector = math.normalizesafe(distanceVector);
+                        float dot = math.dot(normalizedVelocity, normalizeDistanceVector);
+
+                        if (distanceSq < SeparationRadius * SeparationRadius && dot > SeparationDot)
+                        {
+                            float distanceToNeighbour = math.sqrt(distanceSq);
+                            forces.SeparationForce += -distanceVector / distanceToNeighbour;
+                        }
+
+                        if (distanceSq < CohesionRadius * CohesionRadius && dot > CohesionDot)
+                        {
+                            forces.CohesionForce += otherPosition;
+                            forces.CohesionCount++;
+                        }
+
+                        if (distanceSq < AlignmentRadius * AlignmentRadius && dot > AlignmentDot)
+                        {
+                            forces.AlignmentForce += Velocities[other];
+                            forces.AlignmentCount++;
+                        }
+
+                        boidsPerCell++;
 
                     } while (SpatialGrid.TryGetNextValue(out other, ref iterator));
-                }
-            }
-
-            private void CalculateForces(int index, int other, ref Forces forces)
-            {
-                float3 vectorToNeighbour = Positions[other] - Positions[index];
-                float distanceSqToNeighbour = math.lengthsq(vectorToNeighbour);
-
-                float dot = math.dot(
-                    math.normalizesafe(Velocities[index]),
-                    math.normalizesafe(vectorToNeighbour));
-
-                if (distanceSqToNeighbour < SeparationRadius * SeparationRadius && dot > SeparationDot)
-                {
-                    float distanceToNeighbour = math.sqrt(distanceSqToNeighbour);
-                    forces.SeparationForce += -vectorToNeighbour / distanceToNeighbour;
-                }
-
-                if (distanceSqToNeighbour < CohesionRadius * CohesionRadius && dot > CohesionDot)
-                {
-                    forces.CohesionForce += Positions[other];
-                    forces.CohesionCount++;
-                }
-
-                if (distanceSqToNeighbour < AlignmentRadius * AlignmentRadius && dot > AlignmentDot)
-                {
-                    forces.AlignmentForce += Velocities[other];
-                    forces.AlignmentCount++;
                 }
             }
         }
@@ -472,9 +437,9 @@ namespace Demo.Boids
             {
                 float3 steering = new float3(0.0f);
 
-                for (int i = 0; i < PROBES_PER_BOID; i++)
+                for (int i = 0; i < DemoData.PROBES_PER_BOID; i++)
                 {
-                    float3 probe = Probes[index * PROBES_PER_BOID + i];
+                    float3 probe = Probes[index * DemoData.PROBES_PER_BOID + i];
                     if (math.lengthsq(probe) < WorldRadius * WorldRadius) continue;
 
                     float probeLength = math.length(probe);

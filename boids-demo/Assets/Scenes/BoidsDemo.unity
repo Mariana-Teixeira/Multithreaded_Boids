@@ -231,6 +231,14 @@ PrefabInstance:
       propertyPath: m_OnValueChanged.m_PersistentCalls.m_Calls.Array.data[0].m_Target
       value: 
       objectReference: {fileID: 1286936683}
+    - target: {fileID: 4718513145639083574, guid: 0abab5bb77339e4428787a870eb31bd3, type: 3}
+      propertyPath: m_Delegates.Array.data[0].callback.m_PersistentCalls.m_Calls.Array.data[0].m_Target
+      value: 
+      objectReference: {fileID: 1286936683}
+    - target: {fileID: 4718513145639083574, guid: 0abab5bb77339e4428787a870eb31bd3, type: 3}
+      propertyPath: m_Delegates.Array.data[0].callback.m_PersistentCalls.m_Calls.Array.data[1].m_Target
+      value: 
+      objectReference: {fileID: 1286936683}
     - target: {fileID: 5322406881961189319, guid: 0abab5bb77339e4428787a870eb31bd3, type: 3}
       propertyPath: m_AnchorMax.y
       value: 0
@@ -261,28 +269,47 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 5633371595870158818, guid: 0abab5bb77339e4428787a870eb31bd3, type: 3}
       propertyPath: m_AnchoredPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 5898430032007038851, guid: 0abab5bb77339e4428787a870eb31bd3, type: 3}
+      propertyPath: m_OnValueChanged.m_PersistentCalls.m_Calls.Array.data[0].m_Target
+      value: 
+      objectReference: {fileID: 468089112}
+    - target: {fileID: 7325110292953618325, guid: 0abab5bb77339e4428787a870eb31bd3, type: 3}
+      propertyPath: m_AnchorMax.y
       value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 7924309782725097319, guid: 0abab5bb77339e4428787a870eb31bd3, type: 3}
       propertyPath: m_AnchorMax.y
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 8865873889821887562, guid: 0abab5bb77339e4428787a870eb31bd3, type: 3}
+      propertyPath: m_AnchorMax.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8865873889821887562, guid: 0abab5bb77339e4428787a870eb31bd3, type: 3}
+      propertyPath: m_AnchorMin.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8865873889821887562, guid: 0abab5bb77339e4428787a870eb31bd3, type: 3}
+      propertyPath: m_AnchoredPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8865873889821887562, guid: 0abab5bb77339e4428787a870eb31bd3, type: 3}
+      propertyPath: m_AnchoredPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 9207205430280519707, guid: 0abab5bb77339e4428787a870eb31bd3, type: 3}
+      propertyPath: m_AnchorMax.y
+      value: 0
+      objectReference: {fileID: 0}
     m_RemovedComponents: []
-    m_RemovedGameObjects: []
+    m_RemovedGameObjects:
+    - {fileID: 6344352313973001295, guid: 0abab5bb77339e4428787a870eb31bd3, type: 3}
+    - {fileID: 6598023753259106306, guid: 0abab5bb77339e4428787a870eb31bd3, type: 3}
     m_AddedGameObjects: []
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 0abab5bb77339e4428787a870eb31bd3, type: 3}
---- !u!114 &254874139 stripped
-MonoBehaviour:
-  m_CorrespondingSourceObject: {fileID: 4114553311526636717, guid: 0abab5bb77339e4428787a870eb31bd3, type: 3}
-  m_PrefabInstance: {fileID: 254874138}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 0}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 0d0b652f32a2cc243917e4028fa0f046, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: UnityEngine.UI::UnityEngine.UI.Dropdown
 --- !u!1 &334244251
 GameObject:
   m_ObjectHideFlags: 0
@@ -439,10 +466,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: a5c1afe155dcced418f80c8455c46222, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Demo.Boids::DemoInterface
+  m_boidData: {fileID: 11400000, guid: e9afd4c698bccfa48bd880e475d442db, type: 2}
   m_worldData: {fileID: 11400000, guid: a2b7a4ff912aaf140879a917503f34fe, type: 2}
   m_countText: {fileID: 1888213027}
   m_countSlider: {fileID: 1282343132}
-  m_modeDropdown: {fileID: 254874139}
 --- !u!4 &468089113
 Transform:
   m_ObjectHideFlags: 0
@@ -594,7 +621,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::DemoManager
   m_worldData: {fileID: 11400000, guid: a2b7a4ff912aaf140879a917503f34fe, type: 2}
   m_boidData: {fileID: 11400000, guid: e9afd4c698bccfa48bd880e475d442db, type: 2}
-  m_spawnDebugOnStart: 0
+  m_spawnDebugOnStart: 1
 --- !u!114 &1888213027 stripped
 MonoBehaviour:
   m_CorrespondingSourceObject: {fileID: 4486899873534909415, guid: 0abab5bb77339e4428787a870eb31bd3, type: 3}
