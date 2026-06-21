@@ -11,8 +11,8 @@ public class DemoInterface : MonoBehaviour
     
     private void Awake()
     {
-        m_countSlider.minValue = 1;
-        m_countSlider.maxValue = 10;
+        m_countSlider.minValue = m_worldData.GetMinCount;
+        m_countSlider.maxValue = m_worldData.GetMaxCount;
         m_countSlider.SetValueWithoutNotify(m_worldData.DefaultCount);
         m_countText.text = $"{m_worldData.GetCount()} Boids";
     }

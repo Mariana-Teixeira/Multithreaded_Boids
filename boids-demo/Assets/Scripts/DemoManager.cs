@@ -45,7 +45,7 @@ namespace Demo.Boids
         private void Awake()
         {
             m_perceivedBoidsPerCell = DemoData.DEFAULT_CELL_MULTIPLIER * DemoData.MAX_CELL_COUNT;
-            m_spawnRadius = m_worldData.DefaultSpawnRadius;
+            m_spawnRadius = m_worldData.GetMaxSpawnRadius() * (m_worldData.DefaultCount / (float)m_worldData.GetMaxCount);
             m_count = m_worldData.GetCount();
             
             ResetVariables();
@@ -81,7 +81,7 @@ namespace Demo.Boids
         public void SetCount(Slider slider)
         {
             m_count = (int)slider.value * m_worldData.DefaultMultiplier;
-            m_spawnRadius = m_worldData.DefaultSpawnRadius * (slider.value * 0.1f);
+            m_spawnRadius = m_worldData.GetMaxSpawnRadius() * (slider.value / m_worldData.GetMaxCount);
         }
 
         private void ResetVariables()

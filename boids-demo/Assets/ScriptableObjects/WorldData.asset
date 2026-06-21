@@ -13,6 +13,5 @@ MonoBehaviour:
   m_Name: WorldData
   m_EditorClassIdentifier: Demo.Boids::WorldData
   m_defaultWorldRadius: 100
-  m_defaultSpawnRadius: 90
-  m_defaultCount: 10
-  m_defaultMultiplier: 1000
+  m_defaultCount: 5
+  m_defaultMultiplier: 200
